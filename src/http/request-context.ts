@@ -132,6 +132,15 @@ export function sendError(
 export async function readJsonBody<T = unknown>(
   req: IncomingMessage,
 ): Promise<T> {
+  return parseJsonBody<T>(await readRawBody(req));
+}
+
+/**
+ * Read the request body as the exact bytes that arrived, up to
+ * `MAX_JSON_BODY_BYTES`. A webhook signature (ATO-445) is an HMAC of
+ * these bytes, so it has to be checked before anything re-encodes them.
+ */
+export async function readRawBody(req: IncomingMessage): Promise<Buffer> {
   const chunks: Buffer[] = [];
   let total = 0;
   for await (const chunk of req) {
@@ -142,10 +151,14 @@ export async function readJsonBody<T = unknown>(
     }
     chunks.push(buf);
   }
-  if (total === 0) return {} as T;
-  const raw = Buffer.concat(chunks).toString("utf8");
+  return Buffer.concat(chunks);
+}
+
+/** Parse bytes from `readRawBody` as JSON; an empty body is `{}`. */
+export function parseJsonBody<T = unknown>(raw: Buffer): T {
+  if (raw.length === 0) return {} as T;
   try {
-    return JSON.parse(raw) as T;
+    return JSON.parse(raw.toString("utf8")) as T;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     throw new BodyParseError(`invalid JSON: ${message}`);

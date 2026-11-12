@@ -1,3 +1,4 @@
+import { createHmac } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -160,5 +161,91 @@ describe("POST /api/webhooks/:name", () => {
     expect(task?.recurring).toBe(true);
     expect(task?.schedule?.kind).toBe("interval");
     expect(task?.scheduledFor).not.toBeNull();
+  });
+
+  describe("signature presets (ATO-445)", () => {
+    const body = '{"action":"opened","issue":{"title":"Bug"}}';
+    const hex = (key: string | Buffer, data: string) =>
+      createHmac("sha256", key).update(data).digest("hex");
+    const post = (name: string, headers: Record<string, string>, raw = body) =>
+      fetch(`${harness.baseUrl}/api/webhooks/${name}`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...headers },
+        body: raw,
+      });
+
+    it("github: accepts the HMAC of the raw bytes and runs the template", async () => {
+      harness = await startTestHarness({
+        webhooks: {
+          gh: { userMessageTemplate: "issue {{body.issue.title}}", secret: "gh-s", verify: "github" },
+        },
+      });
+      const res = await post("gh", { "x-hub-signature-256": `sha256=${hex("gh-s", body)}` });
+      expect(res.status).toBe(202);
+      const payload = (await res.json()) as WebhookResponse;
+      expect(harness.runtime.taskStore.get(payload.taskId)?.userMessage).toBe("issue Bug");
+    });
+
+    it("github: rejects a wrong, missing or plain-secret header before any task", async () => {
+      harness = await startTestHarness({
+        webhooks: {
+          gh: { userMessageTemplate: "x", secret: "gh-s", verify: "github" },
+        },
+      });
+      for (const headers of [
+        { "x-hub-signature-256": `sha256=${hex("other", body)}` },
+        {},
+        // The header preset's secret does not open a github route.
+        { "x-webhook-secret": "gh-s" },
+      ]) {
+        const res = await post("gh", headers);
+        expect(res.status).toBe(401);
+        const text = await res.text();
+        expect(text).not.toContain("gh-s");
+      }
+      expect(harness.runtime.taskStore.list().length).toBe(0);
+    });
+
+    it("stripe: accepts a fresh timestamp and rejects an expired one", async () => {
+      harness = await startTestHarness({
+        webhooks: {
+          pay: { userMessageTemplate: "paid", secret: "whsec_from_stripe", verify: "stripe" },
+        },
+      });
+      const now = Math.floor(Date.now() / 1000);
+      const fresh = await post("pay", {
+        "stripe-signature": `t=${now},v1=${hex("whsec_from_stripe", `${now}.${body}`)}`,
+      });
+      expect(fresh.status).toBe(202);
+      const old = now - 3600;
+      const expired = await post("pay", {
+        "stripe-signature": `t=${old},v1=${hex("whsec_from_stripe", `${old}.${body}`)}`,
+      });
+      expect(expired.status).toBe(401);
+      expect(harness.runtime.taskStore.list().length).toBe(1);
+    });
+
+    it("standard: accepts webhook-signature v1 and rejects a tampered body", async () => {
+      const key = Buffer.from("standard-webhooks-test-key-0001", "utf8");
+      harness = await startTestHarness({
+        webhooks: {
+          std: {
+            userMessageTemplate: "std {{body.action}}",
+            secret: `whsec_${key.toString("base64")}`,
+            verify: "standard",
+          },
+        },
+      });
+      const now = Math.floor(Date.now() / 1000);
+      const sig = createHmac("sha256", key).update(`msg_1.${now}.${body}`).digest("base64");
+      const headers = {
+        "webhook-id": "msg_1",
+        "webhook-timestamp": String(now),
+        "webhook-signature": `v1,${sig}`,
+      };
+      expect((await post("std", headers)).status).toBe(202);
+      expect((await post("std", headers, body.replace("opened", "closed"))).status).toBe(401);
+      expect(harness.runtime.taskStore.list().length).toBe(1);
+    });
   });
 });

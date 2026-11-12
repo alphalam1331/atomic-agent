@@ -227,3 +227,53 @@ describe("webhook schedule shape versus dispatch policy", () => {
     expect(error.message).toMatch(/^invalid cron expression:/);
   });
 });
+
+describe("webhook verify presets (ATO-445)", () => {
+  it("keeps header as the default and leaves it out of the parsed shape", () => {
+    expect(parsedHook({ userMessageTemplate: "t", secret: "s" })).toStrictEqual({
+      userMessageTemplate: "t",
+      sessionMode: "ephemeral",
+      secret: "s",
+    });
+    expect(parsedHook({ userMessageTemplate: "t", secret: "s", verify: "header" })).toStrictEqual({
+      userMessageTemplate: "t",
+      sessionMode: "ephemeral",
+      secret: "s",
+    });
+  });
+
+  it.each(["github", "stripe"] as const)("keeps verify=%s with its secret", (verify) => {
+    expect(parsedHook({ userMessageTemplate: "t", secret: "s", verify })).toStrictEqual({
+      userMessageTemplate: "t",
+      sessionMode: "ephemeral",
+      secret: "s",
+      verify,
+    });
+  });
+
+  it("accepts a whsec_ base64 secret for verify=standard", () => {
+    const secret = `whsec_${Buffer.from("k".repeat(24)).toString("base64")}`;
+    expect(parsedHook({ userMessageTemplate: "t", secret, verify: "standard" }).verify).toBe("standard");
+  });
+
+  it("rejects an unknown preset", () => {
+    expect(thrownError(() => parsedHook({ userMessageTemplate: "t", secret: "s", verify: "gitlab" }))).toMatchObject({
+      field: "webhooks.ping.verify",
+    });
+  });
+
+  it.each(["github", "stripe", "standard"])("rejects verify=%s without a secret", (verify) => {
+    expect(thrownError(() => parsedHook({ userMessageTemplate: "t", verify }))).toMatchObject({
+      field: "webhooks.ping.secret",
+      reason: `verify=${verify} requires a secret`,
+    });
+  });
+
+  it("rejects a standard secret that is not base64, without echoing it", () => {
+    const error = thrownError(() =>
+      parsedHook({ userMessageTemplate: "t", secret: "whsec_not base64 at all!", verify: "standard" }),
+    );
+    expect(error).toMatchObject({ field: "webhooks.ping.secret" });
+    expect(String((error as Error).message)).not.toContain("not base64 at all");
+  });
+});

@@ -1,13 +1,15 @@
 import { openaiError } from "./openai-errors.js";
 import {
   getHeader,
-  readJsonBody,
+  parseJsonBody,
+  readRawBody,
   sendError,
   sendJson,
   type HttpHandler,
 } from "./request-context.js";
 import { secretEquals } from "./secret-equal.js";
 import { renderWebhookTemplate } from "./webhook-template.js";
+import { verifyWebhookSignature } from "./webhook-signature.js";
 import type { WebhookConfig } from "../config/index.js";
 import { TaskValidationError } from "../tasks/index.js";
 
@@ -30,7 +32,10 @@ import { TaskValidationError } from "../tasks/index.js";
  *  - 202 `{ taskId }` on success
  *  - 404 when the webhook name is unknown or `tasks.enabled` is false
  *  - 401 on bad/missing secret header (only when the config declares one;
- *    compared in constant time, see `secretEquals`)
+ *    compared in constant time, see `secretEquals`), or, for the
+ *    `github` / `stripe` / `standard` presets (ATO-445), on a missing,
+ *    wrong or expired signature over the raw body — always before a
+ *    task is created
  *  - 400 on invalid JSON body, unknown template fields, or schedule validation
  */
 export function createWebhookHandler(): HttpHandler {
@@ -57,24 +62,39 @@ export function createWebhookHandler(): HttpHandler {
       });
       return;
     }
-    if (webhook.secret) {
+    const verify = webhook.verify ?? "header";
+    const reject = (status: number, message: string): void => {
+      sendError(res, status, openaiError(message, "invalid_request_error"));
+      ctx.runtime.metrics.recordWebhookReceived({
+        webhookName: name,
+        status: "rejected",
+      });
+    };
+    // `header` needs no body, so a wrong secret is turned away before it is read.
+    if (verify === "header" && webhook.secret) {
       const provided = getHeader(req, "x-webhook-secret");
       if (!secretEquals(provided, webhook.secret)) {
-        sendError(
-          res,
-          401,
-          openaiError("invalid webhook secret", "invalid_request_error"),
-        );
-        ctx.runtime.metrics.recordWebhookReceived({
-          webhookName: name,
-          status: "rejected",
-        });
+        reject(401, "invalid webhook secret");
         return;
       }
     }
     let body: unknown = {};
     try {
-      body = await readJsonBody<unknown>(req);
+      const raw = await readRawBody(req);
+      if (verify !== "header" && webhook.secret) {
+        const checked = verifyWebhookSignature({
+          verify,
+          secret: webhook.secret,
+          header: (h) => getHeader(req, h),
+          rawBody: raw,
+        });
+        if (!checked.ok) {
+          // The reason names what failed, never the secret or the expected value.
+          reject(401, `invalid webhook signature: ${checked.reason}`);
+          return;
+        }
+      }
+      body = parseJsonBody<unknown>(raw);
     } catch (err) {
       sendError(
         res,

@@ -2,6 +2,42 @@ import { ConfigValidationError } from "./config-validation-error.js";
 import { parseNonEmptyString } from "./config-primitives.js";
 import type { TaskSchedule } from "../tasks/task-types.js";
 
+/** ATO-445: signature presets for an inbound webhook; see `WebhookConfig`. */
+export type WebhookVerify = "header" | "github" | "stripe" | "standard";
+
+export const WEBHOOK_VERIFY_PRESETS: readonly WebhookVerify[] = [
+  "header",
+  "github",
+  "stripe",
+  "standard",
+];
+
+export function isWebhookVerify(value: unknown): value is WebhookVerify {
+  return (
+    typeof value === "string" &&
+    (WEBHOOK_VERIFY_PRESETS as readonly string[]).includes(value)
+  );
+}
+
+/**
+ * The key bytes a Standard Webhooks secret stands for: base64 after an
+ * optional `whsec_` prefix. `null` when that is not valid non-empty base64.
+ */
+export function standardWebhookKey(secret: string): Buffer | null {
+  const encoded = secret.startsWith("whsec_")
+    ? secret.slice("whsec_".length)
+    : secret;
+  if (
+    encoded.length === 0 ||
+    encoded.length % 4 !== 0 ||
+    !/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)
+  ) {
+    return null;
+  }
+  const key = Buffer.from(encoded, "base64");
+  return key.length > 0 ? key : null;
+}
+
 /**
  * Declarative binding between an inbound webhook URL path and the task
  * it materialises. Per-webhook config lets operators point external
@@ -19,12 +55,21 @@ import type { TaskSchedule } from "../tasks/task-types.js";
  *
  * `userMessageTemplate` supports `{{body.<json.path>}}` placeholders
  * against the parsed JSON request body. `secret`, when set, is
- * matched against the `x-webhook-secret` request header in addition
- * to the global API-key check.
+ * checked in addition to the global API-key check, the way `verify`
+ * says (ATO-445, `http/webhook-signature.ts`):
+ *  - `header` (default) — matched against the `x-webhook-secret` header
+ *  - `github`   — HMAC of the raw body in `X-Hub-Signature-256`
+ *  - `stripe`   — HMAC in `Stripe-Signature`, timestamp within 5 minutes
+ *  - `standard` — Standard Webhooks `webhook-signature`; the secret is a
+ *    `whsec_<base64>` key
+ * Every preset but `header` needs a secret. `verify` is optional and
+ * additive, so files without it keep today's behaviour and the config
+ * version is unchanged.
  */
 export interface WebhookConfig {
   userMessageTemplate: string;
   secret?: string;
+  verify?: WebhookVerify;
   schedule?: TaskSchedule;
   sessionMode?: "ephemeral" | "persistent" | "named";
   sessionId?: string;
@@ -99,6 +144,26 @@ export function parseWebhookMap(
     if (cfg.secret !== undefined && cfg.secret !== null) {
       secret = parseNonEmptyString(cfg.secret, `${field}.${name}.secret`);
     }
+    const verify = cfg.verify ?? "header";
+    if (!isWebhookVerify(verify)) {
+      throw new ConfigValidationError(
+        `${field}.${name}.verify`,
+        `expected ${WEBHOOK_VERIFY_PRESETS.join("|")}, got ${JSON.stringify(verify)}`,
+      );
+    }
+    if (verify !== "header" && !secret) {
+      throw new ConfigValidationError(
+        `${field}.${name}.secret`,
+        `verify=${verify} requires a secret`,
+      );
+    }
+    if (verify === "standard" && secret && !standardWebhookKey(secret)) {
+      // Never echo the secret itself into the error.
+      throw new ConfigValidationError(
+        `${field}.${name}.secret`,
+        "verify=standard expects a whsec_<base64> secret",
+      );
+    }
     let schedule: TaskSchedule | undefined;
     if (cfg.schedule !== undefined && cfg.schedule !== null) {
       schedule = parseWebhookSchedule(
@@ -111,6 +176,8 @@ export function parseWebhookMap(
       sessionMode,
       ...(sessionId ? { sessionId } : {}),
       ...(secret ? { secret } : {}),
+      // Written only when it is not the default, so existing configs parse unchanged.
+      ...(verify !== "header" ? { verify } : {}),
       ...(schedule ? { schedule } : {}),
     };
   }

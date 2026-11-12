@@ -56,6 +56,11 @@ import {
   createRunTaskHandler,
 } from "./route-tasks.js";
 import { createWebhookHandler } from "./route-webhooks.js";
+import {
+  createCreateWebhookHandler,
+  createDeleteWebhookHandler,
+  createListWebhooksHandler,
+} from "./route-webhooks-admin.js";
 import { createCodingModeHandlers } from "./route-coding-mode.js";
 import { createContextPreviewHandler } from "./route-context-preview.js";
 import {
@@ -259,5 +264,9 @@ export function buildRouteTable(): RouteDefinition[] {
       path: "/api/webhooks/{name}",
       handler: createWebhookHandler(),
     },
+    // ATO-445: the desktop's Webhooks screen lists, adds and removes routes.
+    { method: "GET", path: "/api/webhooks", handler: createListWebhooksHandler() },
+    { method: "POST", path: "/api/webhooks", handler: createCreateWebhookHandler() },
+    { method: "DELETE", path: "/api/webhooks/{name}", handler: createDeleteWebhookHandler() },
   ];
 }
