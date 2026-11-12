@@ -170,6 +170,9 @@ contextBridge.exposeInMainWorld("atomic", {
   // ATO-731: the chat on screen moves to the folder picked (sessionId), without restarting the agent.
   chooseWorkspace: (sessionId?: string | null) => ipcRenderer.invoke("app:chooseWorkspace", sessionId ?? null),
   openPath: (path: string) => ipcRenderer.invoke("app:openPath", path),
+  // ATO-1426: a shell code block's "Open in Terminal" (main: ATO-1424, typed in Terminal, not run).
+  openInTerminal: (command: string, cwd?: string | null) =>
+    ipcRenderer.invoke("terminal:openWithCommand", { command, cwd: cwd || null }),
   // Chat review Д23: `fromReply` for a chip from a reply's text, which main checks again.
   fileMenu: (path: string, fromReply?: boolean) => ipcRenderer.invoke("app:fileMenu", path, fromReply === true),
   // item 5: existence check for the files a turn wrote (fs.stat only)
