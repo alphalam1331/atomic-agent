@@ -132,6 +132,15 @@ export function sendError(
 export async function readJsonBody<T = unknown>(
   req: IncomingMessage,
 ): Promise<T> {
+  return parseJsonBody<T>(await readRawBody(req));
+}
+
+/**
+ * Read the request body as bytes, up to `MAX_JSON_BODY_BYTES`. The
+ * webhook route needs the exact bytes the sender signed (GitHub's and
+ * Stripe's HMAC signatures, ATO-625) before it parses them.
+ */
+export async function readRawBody(req: IncomingMessage): Promise<Buffer> {
   const chunks: Buffer[] = [];
   let total = 0;
   for await (const chunk of req) {
@@ -142,8 +151,13 @@ export async function readJsonBody<T = unknown>(
     }
     chunks.push(buf);
   }
-  if (total === 0) return {} as T;
-  const raw = Buffer.concat(chunks).toString("utf8");
+  return Buffer.concat(chunks);
+}
+
+/** Parse a body read by `readRawBody`; an empty body is `{}`. */
+export function parseJsonBody<T = unknown>(body: Buffer): T {
+  if (body.length === 0) return {} as T;
+  const raw = body.toString("utf8");
   try {
     return JSON.parse(raw) as T;
   } catch (err) {

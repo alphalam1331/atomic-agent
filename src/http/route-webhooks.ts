@@ -1,21 +1,23 @@
 import { openaiError } from "./openai-errors.js";
 import {
-  getHeader,
-  readJsonBody,
+  parseJsonBody,
+  readRawBody,
   sendError,
   sendJson,
   type HttpHandler,
 } from "./request-context.js";
-import { secretEquals } from "./secret-equal.js";
+import { checkSecretHeader, verifyWebhookRequest } from "./webhook-signature.js";
 import { renderWebhookTemplate } from "./webhook-template.js";
 import type { WebhookConfig } from "../config/index.js";
 import { TaskValidationError } from "../tasks/index.js";
 
 /**
  * `POST /api/webhooks/:name` — generic inbound webhook route. Resolves
- * the named binding from `config.webhooks`, authenticates via the
- * optional `x-webhook-secret` header (in addition to the global API
- * key), renders `userMessageTemplate` against the JSON body, and
+ * the named binding from `config.webhooks`, authenticates against the
+ * binding's optional `secret` (in addition to the global API key on the
+ * main server) by the `x-webhook-secret` header, a GitHub
+ * `x-hub-signature-256` or a Stripe `stripe-signature` HMAC
+ * (`webhook-signature.ts`, ATO-625), renders `userMessageTemplate` against the JSON body, and
  * materialises the result as a task via `TaskRunner.create`. The
  * handler NEVER calls `runTurn` directly — that invariant is what
  * keeps per-session FIFO intact under external triggers.
@@ -29,11 +31,21 @@ import { TaskValidationError } from "../tasks/index.js";
  * Responses:
  *  - 202 `{ taskId }` on success
  *  - 404 when the webhook name is unknown or `tasks.enabled` is false
- *  - 401 on bad/missing secret header (only when the config declares one;
- *    compared in constant time, see `secretEquals`)
+ *  - 401 on a bad/missing secret or signature (only when the config
+ *    declares a secret; compared in constant time, see `secretEquals`)
+ *  - 403 `webhook_secret_required` when `requireSecret` is set and the
+ *    binding has no secret (the tunnel gateway: there is no API key
+ *    in front of it, so a binding without a secret is never reachable)
  *  - 400 on invalid JSON body, unknown template fields, or schedule validation
  */
-export function createWebhookHandler(): HttpHandler {
+export interface WebhookHandlerOptions {
+  /** Refuse bindings without a `secret` (the public tunnel gateway). */
+  requireSecret?: boolean;
+}
+
+export function createWebhookHandler(
+  options: WebhookHandlerOptions = {},
+): HttpHandler {
   return async (req, res, ctx) => {
     if (!ctx.runtime.config.tasks.enabled) {
       sendError(res, 404, openaiError("tasks subsystem disabled"));
@@ -48,7 +60,10 @@ export function createWebhookHandler(): HttpHandler {
       sendError(res, 400, openaiError("webhook name is required"));
       return;
     }
-    const webhook = ctx.runtime.config.webhooks[name];
+    // Own keys only: `constructor` or `__proto__` must not resolve to
+    // something off Object.prototype.
+    const webhooks = ctx.runtime.config.webhooks;
+    const webhook = Object.hasOwn(webhooks, name) ? webhooks[name] : undefined;
     if (!webhook) {
       sendError(res, 404, openaiError(`webhook not found: ${name}`));
       ctx.runtime.metrics.recordWebhookReceived({
@@ -57,34 +72,42 @@ export function createWebhookHandler(): HttpHandler {
       });
       return;
     }
-    if (webhook.secret) {
-      const provided = getHeader(req, "x-webhook-secret");
-      if (!secretEquals(provided, webhook.secret)) {
-        sendError(
-          res,
-          401,
-          openaiError("invalid webhook secret", "invalid_request_error"),
-        );
-        ctx.runtime.metrics.recordWebhookReceived({
-          webhookName: name,
-          status: "rejected",
-        });
-        return;
-      }
-    }
-    let body: unknown = {};
-    try {
-      body = await readJsonBody<unknown>(req);
-    } catch (err) {
-      sendError(
-        res,
-        400,
-        openaiError(err instanceof Error ? err.message : "invalid body"),
-      );
+    const reject = (status: number, message: string, code?: string): void => {
+      sendError(res, status, openaiError(message, "invalid_request_error", null, code ?? null));
       ctx.runtime.metrics.recordWebhookReceived({
         webhookName: name,
         status: "rejected",
       });
+    };
+    if (options.requireSecret && !webhook.secret) {
+      reject(
+        403,
+        `webhook ${name} has no secret, so it is not reachable through the tunnel`,
+        "webhook_secret_required",
+      );
+      return;
+    }
+    // A wrong plain secret header is refused before the body is read.
+    if (webhook.secret && checkSecretHeader(req.headers, webhook.secret) === false) {
+      reject(401, "invalid webhook secret");
+      return;
+    }
+    let rawBody: Buffer;
+    try {
+      rawBody = await readRawBody(req);
+    } catch (err) {
+      reject(400, err instanceof Error ? err.message : "invalid body");
+      return;
+    }
+    if (webhook.secret && verifyWebhookRequest(req.headers, rawBody, webhook.secret) === null) {
+      reject(401, "invalid webhook secret");
+      return;
+    }
+    let body: unknown = {};
+    try {
+      body = parseJsonBody<unknown>(rawBody);
+    } catch (err) {
+      reject(400, err instanceof Error ? err.message : "invalid body");
       return;
     }
     const userMessage = renderWebhookTemplate(
