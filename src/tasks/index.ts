@@ -10,6 +10,14 @@ export type {
   TaskStoreOptions,
 } from "./task-store.js";
 export { TaskRunner } from "./task-runner.js";
+export {
+  TASK_PAUSED_ERROR,
+  cancelPausedTask,
+  isPausedTask,
+  pauseRecurringTask,
+  resumeRecurringTask,
+} from "./task-pause.js";
+export type { TaskPauseRefusal, TaskPauseResult } from "./task-pause.js";
 export { planTaskResume, resumeNote, wasInterruptedFromOutside } from "./task-resume.js";
 export type { TaskResumePlan, TaskResumePolicy } from "./task-resume.js";
 export type {

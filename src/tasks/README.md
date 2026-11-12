@@ -12,6 +12,7 @@ This area owns durable task queue. Read [AGENTS.md](AGENTS.md) before changing i
 - [task-types.ts](task-types.ts)
 - [task-schedule.ts](task-schedule.ts)
 - [task-resume.ts](task-resume.ts)
+- [task-pause.ts](task-pause.ts)
 - [task-run-summary.ts](task-run-summary.ts)
 - [task-report-hold.ts](task-report-hold.ts)
 
@@ -22,6 +23,10 @@ TaskStore owns the durable queue, TaskRunner owns claiming/execution/retry/repor
 ## Resuming an interrupted run
 
 A run cut off from outside (the boot sweep took it back from a dead process, or a shutdown left a one-shot task due) is continued from its session's checkpoint rather than started over ([task-resume.ts](task-resume.ts), ATO-1109): the turn's message starts with a note saying how far the cut-off run got, and the session's progress marker records the task id and the resumes spent. Resumes after a crash or kill count towards `agent.task.maxResumes` and back off on the retry curve; past the limit the task fails with a sentence saying why. A run a person stopped is never resumed. `agent.task.resumeInterrupted: false` restores the fresh re-run.
+
+## Pausing a recurring task
+
+A recurring task can be paused and resumed ([task-pause.ts](task-pause.ts), ATO-21; Telegram's `/cron pause|resume` uses it). Pause moves a waiting (`pending`) row to `blocked` with the fixed reason `paused by the owner`, so the scheduler never claims it; a run in progress is refused. Resume rearms it with `requeueRecurring` for the next firing after now, the same path as a completed firing; firings that fell inside the pause are skipped. No schema change: a row blocked for any other reason is never resumed this way.
 
 ## Task-specific reading
 
