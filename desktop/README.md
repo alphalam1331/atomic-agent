@@ -5,14 +5,28 @@ loopback and drives it from a native macOS window: menu bar, sidebar of
 destinations, streaming transcript with tool cards, inline approval prompts, a
 command palette, and a settings window.
 
+## Development startup
+
+Select the repository's supported Node version, then install both packages:
+
 ```bash
+# From the repository root:
+npm ci
 cd desktop
-npm install
+npm ci
 npm start
 ```
 
-`npm start` builds and launches. `npm run dev` adds detached DevTools.
-`npm run smoke` runs the whole thing headlessly and asserts it works (below).
+On macOS and Linux, `npm start` builds the desktop and the agent backend, then
+launches the app against this checkout. It generates an executable launcher
+under `desktop/.dev/` using absolute paths to the selected Node executable and
+the built CLI. No manual linking is needed. `npm run dev` does the same and
+adds detached DevTools. Repeating either command rebuilds the backend and
+refreshes the launcher after a pull, checkout move or Node version change.
+
+An explicit `ATOMIC_AGENT_BIN` is preserved and skips the local backend build.
+On Windows, startup keeps using the installed or bundled agent executable.
+`npm run smoke` runs the headless suite described below.
 
 ## How it talks to the agent
 
@@ -1526,51 +1540,16 @@ app the first time the renderer opens the microphone. The .app is ad-hoc
 signed, so its signature changes on every rebuild and macOS re-asks for
 microphone access after each new build — expected, not a bug.
 
-The app does **not** bundle the agent. It looks for `ATOMIC_AGENT_BIN` first,
-then `~/atag-agent/bin/atag`, then `atag` (or `atomic-agent`) in
-`~/.local/bin`, `/usr/local/bin` and `/opt/homebrew/bin`. Without one the
-window still opens and says so instead of failing silently. Whichever it
-started is printed in the diagnostics line as `agent <path>`, in both the
-supported and unsupported cases — the desktop can be running a different
-agent from the terminal's `atag`, and that has to be answerable from the
-window.
+Packaged builds carry the matching agent under `resources/agent`.
+`ATOMIC_AGENT_BIN` takes precedence over that binary. For source development,
+use [development startup](#development-startup) to build and link the agent
+from this checkout automatically on macOS and Linux.
 
-`~/atag-agent/bin/atag` is the locally built agent, and it is deliberately
-preferred over the released install: a released 0.5.5 binary has no
-`/api/coding-mode`, which is what greys the coding-mode chip out. It is a
-three-line shebang script carrying an absolute node path (the app is spawned
-without a shell and a Finder-launched `.app` has a minimal `PATH`) over a
-checkout of this branch:
-
-```bash
-git clone <this repo> ~/atag-agent && cd ~/atag-agent
-# If it was cloned from a temporary worktree, repoint it at the repo that
-# outlives one — otherwise the next `git pull` has nowhere to go:
-git remote set-url origin https://github.com/AtomicBot-ai/atomic-agent
-npm install --engine-strict=false && npm run build
-mkdir -p ~/atag-agent/bin   # the repo ships no bin/; the build writes dist/ only
-printf '#!/bin/sh\nexec %s --enable-source-maps %s/dist/cli/index.js "$@"\n' \
-  "$(command -v node)" "$HOME/atag-agent" > ~/atag-agent/bin/atag
-chmod 755 ~/atag-agent/bin/atag && ~/atag-agent/bin/atag --version
-```
-
-The smoke suite depends on this: the four live coding-mode round-trip checks
-run only when the agent it spawned carries `/api/coding-mode`, which in
-practice means this checkout. Without it the block collapses to the single
-line `coding mode round-trip skipped: agent has no route`, and the suite is
-then proving the chip's honest-blank path rather than the feature. A routeless
-binary that IS the preferred one still fails, so the skip cannot hide a
-regression — but a green run on a machine that has never been through this
-recipe is a smaller claim than one on a machine that has.
-
-Nothing under `~/.local/bin` is touched, so a terminal `atag` keeps running
-the released binary. Rollback is `rm -rf ~/atag-agent`; do exactly that once
-the route ships in a release, or the desktop will keep preferring a build
-that has fallen behind. Re-run `npm run build` and re-check `--version` after
-every pull: a missing `dist/cli/index.js` fails at spawn time with an
-unhelpful node error. The checkout tracks this branch, which exists only
-until it merges, so update it with `git pull origin main` (plus a rebuild)
-rather than a bare `git pull`.
+A direct Electron launch without an override still searches the bundled
+agent, `~/atag-agent/bin/atag`, the CLI installer locations and the usual
+system prefixes. If none exists, the window reports the missing agent.
+Settings diagnostics names the executable actually started as `agent <path>`;
+it can differ from the terminal's `atag`.
 
 The packaged app answers `--smoke` exactly like the dev build, which is how a
 release candidate gets checked before it goes anywhere:

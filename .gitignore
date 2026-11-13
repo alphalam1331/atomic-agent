@@ -22,6 +22,7 @@ CLAW-LOOT.md
 # Electron desktop client
 desktop/node_modules/
 desktop/out/
+desktop/.dev/
 desktop/release/
 
 # Atomic Chat Core fetched for the installer (desktop/scripts/fetch-core.mjs)
