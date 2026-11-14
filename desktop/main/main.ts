@@ -2764,14 +2764,15 @@ function wireIpc(client: AgentClient): void {
   // The menu's Quit: the app quits and `before-quit` stops the agent, as the TUI's /quit does.
   ipcMain.handle("app:quit", () => { app.quit(); });
   ipcMain.handle("cli:taskCreate", (_event, input: unknown) => {
-    const { message, kind, expression, tz } = (input ?? {}) as {
-      message?: unknown; kind?: unknown; expression?: unknown; tz?: unknown;
+    const { message, kind, expression, tz, notify } = (input ?? {}) as {
+      message?: unknown; kind?: unknown; expression?: unknown; tz?: unknown; notify?: unknown;
     };
     if (typeof message !== "string" || !message.trim()) return { ok: false, error: "message required" };
     if (kind !== "cron" && kind !== "interval" && kind !== "at") return { ok: false, error: "kind must be cron, interval or at" };
     if (typeof expression !== "string" || !expression.trim()) return { ok: false, error: "schedule required" };
+    if (notify !== undefined && notify !== "telegram") return { ok: false, error: "notify only supports: telegram" };
     return taskCreate(
-      { message, kind, expression, ...(typeof tz === "string" && tz.trim() ? { tz: tz.trim() } : {}) },
+      { message, kind, expression, ...(typeof tz === "string" && tz.trim() ? { tz: tz.trim() } : {}), ...(notify === "telegram" ? { notify } : {}) },
       client.status.workingDir,
     ).then((res) => (A.taskCreated(kind, res), res));
   });

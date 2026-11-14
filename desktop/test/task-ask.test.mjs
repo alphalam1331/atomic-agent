@@ -24,6 +24,20 @@ test("the sentence goes out whole, on one line, and asks for a schedule through 
   assert.match(msg, /when it runs next/);
 });
 
+test("Telegram reporting is requested only when explicitly selected", () => {
+  assert.doesNotMatch(T.taskAskMessage("every day, check the site"), /notify:/);
+  assert.doesNotMatch(T.taskAskMessage("every day, check the site", false), /notify:/);
+  assert.match(T.taskAskMessage("every day, check the site", true), /Set notify: "telegram" on the task/);
+  assert.equal(T.taskAskMessage("", true), "");
+});
+
+test("Telegram reports require an enabled channel and a paired owner", () => {
+  assert.equal(T.taskTelegramPaired({enabled:true, ownerUserId:12345}), true);
+  for (const config of [null, {}, {enabled:false, ownerUserId:12345}, {ownerUserId:12345}, {enabled:true}, {enabled:true, ownerUserId:null}, {enabled:true, ownerUserId:"12345"}]) {
+    assert.equal(T.taskTelegramPaired(config), false);
+  }
+});
+
 test("every example is a schedule plus an action and fills a message", () => {
   assert.ok(T.TASK_ASK_EXAMPLES.length >= 2);
   for (const ex of T.TASK_ASK_EXAMPLES) {

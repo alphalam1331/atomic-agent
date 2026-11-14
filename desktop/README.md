@@ -614,7 +614,12 @@ Honestly degraded, and labelled as such in the UI:
   `atag task create` (POST /api/tasks on 0.5.4 takes no schedule). Cancel goes
   through `DELETE /api/tasks/{id}` and run-now through
   `POST /api/tasks/{id}/run`; the form's Next runs preview is the agent's own
-  cron-parser. With no tasks at all the list hides its filters and search.
+  cron-parser. Both new-task forms offer **Send reports to Telegram**, off
+  by default. A paired, enabled Telegram channel makes the choice available;
+  **Set up Telegram** opens Settings without discarding the task draft. The
+  plain-language request asks the agent to set `notify: "telegram"`; the manual
+  form passes `--notify telegram` to task creation. Task details show the
+  report destination. With no tasks at all the list hides its filters and search.
   The firings feed is not exposed by the HTTP API, so the task page has no
   Recent firings section.
 - **Skills** in cloud mode read the selected session's live workspace catalog
@@ -802,7 +807,13 @@ Honestly degraded, and labelled as such in the UI:
   every 2 s until the code is claimed, and the claim shows as
   "Paired: @username is now the owner." A paired owner is replaced only from
   the Owner row's Replace, which takes a second click. The code lives in
-  memory while its window is open and is never logged.
+  memory while its window is open and is never logged. **Send test notification**
+  verifies delivery to that paired account through the running agent, with
+  sending, success and failure shown in the same row. It requires the saved
+  settings to be applied and a connected channel when live status is available.
+  The authenticated `POST /api/telegram/test-notification` sends a fixed message,
+  accepts no recipient, and never queues a test for later. Older agents show an
+  update hint. The Connected indicator uses live channel status when available.
 - **Composio** (Settings › Connections, beside MCP servers and Telegram; the
   palette's Composio row) is the TUI Integrations tab's Composio row
   (`src/integrations/composio-integration.ts`, its setup walkthrough and

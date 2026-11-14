@@ -1387,6 +1387,7 @@ const TG = {
   mode:'list', token:{error:null, submitting:false},
   message:null, lastError:null, busy:false,
   channel:null, // ATO-758: the live channel as the agent reports it (BR.telegramChannel)
+  test:tgTestInitial(),
   confirm:null, // ATO-426: 'clearToken' / 'clearOwner' while its button waits for a second click
   confirmAt:0, // ATO-435: when it was armed; a second click sooner than TG_CONFIRM_MIN_MS is the same double-click
   // The message's kind ('owed' carries a change the agent loads at start, 'info' anything else) and the agent
@@ -23165,6 +23166,7 @@ function tkRow(t) {
     recurring: !!t.recurring, scheduledFor: typeof t.scheduledFor === 'number' ? t.scheduledFor : null,
     createdAt:t.createdAt, updatedAt:t.updatedAt, startedAt:t.startedAt ?? null, completedAt:t.completedAt ?? null,
     attempts:t.attempts ?? 0, maxAttempts:t.maxAttempts ?? 0, lastError:t.lastError || null,
+    notify:t.notify === 'telegram' ? 'telegram' : null,
   };
 }
 function tkVisibleRows() {
@@ -23381,6 +23383,7 @@ function tkDetailHTML() {
     ['Schedule', row.scheduleLabel + (row.recurring ? ' (recurring)' : '')],
     tkHasNextRun(row) ? ['Next run', formatRelativeMs(row.scheduledFor, now) + ' (' + (row.scheduledFor !== null ? formatUnixMs(row.scheduledFor) : '-') + ')'] : null,
     ['Attempts', row.attempts + '/' + row.maxAttempts],
+    ['Reports', row.notify === 'telegram' ? 'Task chat and paired Telegram account' : 'Task chat'],
     ['Session', row.sessionId ?? '—'],
     ['Created', formatUnixMs(row.createdAt) + ' · updated ' + formatUnixMs(row.updatedAt) + (row.completedAt !== null ? ' · completed ' + formatUnixMs(row.completedAt) : '')],
   ];
@@ -23403,7 +23406,44 @@ function tkDetailHTML() {
 function tkNewForm() {
   // ATO-519: `manual` false is the plain-words step (`ask`); true is the cron / interval / at form.
   return {manual:false, ask:'', kind:'cron', cronExpression:'', intervalSeconds:'', atIsoOrMs:'', tz:'', message:'',
+          notify:false, telegramPaired:false, telegramLoaded:false, telegramLoading:false,
           preview:{ok:false, error:null, nextFirings:[]}, submitting:false, error:null, timer:null};
+}
+/* A task's report destination is explicit state, independent of the wording
+   of its message. Checking the saved pairing never opts a new task in. */
+async function tkLoadTelegram(f) {
+  if (f.telegramLoading) return;
+  f.telegramLoading = true;
+  const gen = AGENT_GEN;
+  let config = null;
+  try {
+    // A scheduling chat runs on the connected agent, which may be on another computer.
+    if (BR && BR.config) {
+      const res = await BR.config();
+      config = res && res.ok && res.data && res.data.config ? res.data.config.telegram : null;
+    } else if (BR && BR.configGetKey) {
+      const res = await BR.configGetKey('telegram');
+      config = res && res.ok ? res.value : null;
+    } else {
+      await Promise.resolve(); // keep demo rendering from repainting inside tkNotifyHTML
+    }
+  } catch (e) { /* setup link stays available */ }
+  if (TK.form !== f) return;
+  if (gen !== AGENT_GEN) { f.telegramLoading = false; f.telegramLoaded = false; return; }
+  f.telegramPaired = taskTelegramPaired(config);
+  f.telegramLoaded = true; f.telegramLoading = false;
+  if (!f.telegramPaired) f.notify = false;
+  if (tasksVisible() && TK.mode === 'create') tkRenderKeepCaret();
+}
+function tkNotifyHTML(f) {
+  if (!f.telegramLoaded && !f.telegramLoading) tkLoadTelegram(f);
+  const loading = !f.telegramLoaded;
+  const help = loading ? 'Checking Telegram setup…'
+    : f.telegramPaired ? 'Each run also sends its final result to your paired Telegram account.'
+    : 'Pair and enable Telegram in Settings to receive task reports there.';
+  return '<div class="tk-card"><div class="tk-setrow"><div class="body"><div class="t">Send reports to Telegram</div><div class="d">' + esc(help) + '</div></div>'
+    + setSwitchHTML({on:f.notify && f.telegramPaired, label:'Send reports to Telegram', act:'tasks:notify', disabled:loading || !f.telegramPaired, busy:loading, title:'Send each run\'s final result to Telegram'})
+    + '</div>' + (!loading && !f.telegramPaired ? '<div class="tk-setrow"><button class="btn btn-s sm" data-act="tasks:telegram">Set up Telegram</button></div>' : '') + '</div>';
 }
 /* ST-03: kind as a segmented control, labelled fields, the next five
    firings beside them, and Create task disabled until the schedule parses. */
@@ -23431,6 +23471,7 @@ function tkFormHTML() {
         + (f.kind === 'cron' ? field('Time zone', 'tz', f.tz, 'optional, e.g. Europe/Berlin', '', true) : '')
         // ATO-522: every run replies in the task's own session (task-runner.ts), reached from the detail view's Open session.
         + field('Message', 'message', f.message, 'what should the agent do when this fires?', 'Each run\'s reply lands in this task\'s own chat: open the task and press Open session.', false)
+        + tkNotifyHTML(f)
       + '</div>'
       + '<div class="set-prevcard" id="tk-preview">' + tkPreviewHTML(f) + '</div>'
     + '</div>'
@@ -23457,6 +23498,7 @@ function tkAskHTML(f) {
       + '<div class="set-chips set-askex" role="group" aria-label="Examples">'
         + TASK_ASK_EXAMPLES.map((ex, i) => '<button class="tk-chip tk-chip--sm set-askchip" data-act="tasks:example:' + i + '">' + esc(ex) + '</button>').join('')
       + '</div>'
+      + tkNotifyHTML(f)
     + '</div>'
     + '<div class="set-formfoot">'
       + '<button class="btn btn-g" data-act="tasks:manual">Set up manually</button>'
@@ -23473,7 +23515,7 @@ function tkAskHTML(f) {
    box carries into the new chat, as ⌘ N carries it, instead of being lost. */
 function tkAsk() {
   const f = TK.form;
-  const text = f ? taskAskMessage(f.ask) : '';
+  const text = f ? taskAskMessage(f.ask, f.notify && f.telegramPaired) : '';
   if (!text) return {ok:false, error:'nothing to send'};
   TK.mode = 'list'; TK.form = null;
   const kept = S.draft || '';
@@ -23525,7 +23567,7 @@ async function tkSubmit() {
   f.submitting = true; render();
   const sc = v.schedule;
   const expression = sc.kind === 'cron' ? sc.expression : sc.kind === 'interval' ? String(sc.everyMs / 1000) : String(sc.at);
-  const res = await BR.taskCreate({message:v.message, kind:sc.kind, expression, tz:sc.kind === 'cron' ? (sc.tz || '') : ''});
+  const res = await BR.taskCreate({message:v.message, kind:sc.kind, expression, tz:sc.kind === 'cron' ? (sc.tz || '') : '', ...(f.notify && f.telegramPaired ? {notify:'telegram'} : {})});
   f.submitting = false;
   if (!res || !res.ok) { f.error = (res && res.error) || 'task create failed'; render(); return {ok:false, error:f.error}; }
   TK.msg = 'task ' + res.id + ' scheduled (' + sc.kind + ')';
@@ -23575,6 +23617,8 @@ function tasksAct(what) {
   const arg = rest.join(':');
   const sel = () => arg || (TK.mode === 'detail' ? TK.detailId : (tkSelected() || {}).id);
   if (verb === 'new') { if (!S.settings && S.room !== 'tasks') { S.settings = 1; S.settingsPane = 'tasks'; } TK.mode = 'create'; TK.form = tkNewForm(); TK.msg = null; render(); return; }
+  if (verb === 'notify') { const f = TK.form; if (f && f.telegramPaired) { f.notify = !f.notify; tkRepaintKeepFocus(); } return; }
+  if (verb === 'telegram') { if (TK.form) TK.form.telegramLoaded = false; act('settings:telegram'); return; }
   // ATO-519: the plain-words step and the manual form, both ways, and an example into the field.
   if (verb === 'manual' || verb === 'plain') { const f = TK.form || (TK.form = tkNewForm()); f.manual = verb === 'manual'; f.error = null; render(); return; }
   if (verb === 'example') { const f = TK.form || (TK.form = tkNewForm()); const ex = TASK_ASK_EXAMPLES[Number(arg)]; if (ex) f.ask = ex; render(); const n = document.querySelector('[data-tk-field="ask"]'); if (n) { n.focus(); n.setSelectionRange(n.value.length, n.value.length); } return; }
@@ -28333,7 +28377,7 @@ function tgCfgBlock() { const t = LIVE_CONFIG && LIVE_CONFIG.telegram; return t 
 function tgEnabled() { const t = tgCfgBlock(); if (t && typeof t.enabled === 'boolean') return t.enabled; return TG.cfg && typeof TG.cfg.enabled === 'boolean' ? TG.cfg.enabled : null; }
 function tgOwner() { const t = tgCfgBlock(); if (t && 'ownerUserId' in t) return t.ownerUserId === undefined ? null : t.ownerUserId; return TG.cfg && TG.cfg.ownerUserId !== undefined ? TG.cfg.ownerUserId : null; }
 function tgHasToken() { if (!TG.keysKnown) return null; return TG.dotenvKeys.includes('TELEGRAM_BOT_TOKEN') || TG.envKeys.includes('TELEGRAM_BOT_TOKEN'); }
-function telegramTabEntered() { TG.confirm = null; if (TG.restart.phase !== 'restarting') TG.restart = tgRestartInitial(); tgRefresh(); tgPairProbe(); }
+function telegramTabEntered() { TG.confirm = null; if (TG.restart.phase !== 'restarting') TG.restart = tgRestartInitial(); if (TG.test.phase !== 'sending') TG.test = tgTestInitial(); tgRefresh(); tgPairProbe(); }
 function tgRepaint() { if (telegramVisible()) paneRepaintKeepFocus(telegramTab()); }
 /* R refresh (orchestrator refreshSettings): config + the key names in the env and .env.
    Review fix: a refresh asked for while one was in flight used to be DROPPED
@@ -28406,18 +28450,15 @@ function telegramTab() {
    starts, so a change to any of them is owed a restart until a new agent
    process is up — AGENT_GEN moves when one connects, whoever restarted it. */
 function tgRestartOwed() { return TG.owedGen !== null && TG.owedGen === AGENT_GEN; }
-/* Connected = set up for the bot to answer, in the agent that is running: a
-   token, a paired owner, Telegram turned on (unknown is not on: the schema's
-   default is off), and no change still waiting for a restart. The channel's
-   live state stays inside the agent (no route exposes it), so this is what
-   the desktop can know. */
-function tgConnected(enabled, owner) { return tgHasToken() === true && owner !== null && enabled === true && !tgRestartOwed(); }
+/* Prefer live channel state; older agents fall back to saved settings. */
+function tgConnected(enabled, owner) { return tgHasToken() === true && owner !== null && enabled === true && !tgRestartOwed() && (!TG.channel || TG.channel.state === 'up'); }
 function tgStatusHTML(enabled, owner) {
   // ATO-758: the settings say connected, but another poller holds the live channel off.
   const on = tgConnected(enabled, owner) && !tgOtherPollerHTML(TG.channel);
   const line = on ? 'Message your bot in Telegram to talk to Atomic Agent. Send /help there for its commands.'
     : owner === null ? 'Almost there: confirm your Telegram account below.'
     : enabled !== true ? 'Turned off: the bot does not answer until you turn it on below.'
+    : !tgRestartOwed() && TG.channel && TG.channel.state !== 'up' ? 'Telegram is not connected. Check again, or restart the bot below.'
     : 'Waiting for a restart: the agent loads the token and these settings when it starts. Press Restart agent below; the app stays open.';
   // The tab is read on entry and after its own writes; Check again reads it once more (the `R` key), e.g. after pairing elsewhere.
   return '<div class="tk-card sd-tgstatus"><div class="tk-setrow">'
@@ -28444,6 +28485,7 @@ function tgRowsHTML(enabled, owner) {
       // ATO-859: replacing the owner pairs a new account; like Clear owner it takes a second click (ATO-718: only after confirmation).
       + (TG.pair.supported !== false ? '<button class="btn btn-s sm" data-act="telegram:pairReplace"' + (busy || TG.pairBusy ? ' disabled' : '') + '>' + (TG.confirm === 'pairReplace' ? 'Click again to replace' : 'Replace') + '</button>' : '')
       + '<button class="btn btn-danger sm" data-act="telegram:clearOwner"' + (busy ? ' disabled' : '') + '>' + (TG.confirm === 'clearOwner' ? 'Click again to clear' : 'Clear owner') + '</button>') : '')
+    + tgTestRowHTML(TG.test, {hasToken:tgHasToken(), owner, enabled, restartOwed:tgRestartOwed(), channel:TG.channel, busy}, {esc})
     + row('Restart the bot', 'Restarts the agent, and the bot with it. The app stays open.',
       '<button class="btn btn-s sm" data-act="telegram:restart"' + (TG.restart.phase === 'restarting' ? ' disabled' : '') + '>Restart</button>')
     + '</div>'
@@ -28570,6 +28612,7 @@ function telegramAct(what) {
   if (verb === 'clearOwner') { tgClearOwner(); return; }
   // `r — restart` restarts the channel in the TUI; the desktop restarts the agent runtime, which restarts the channel with it.
   if (verb === 'restart') { tgRestart(); return; }
+  if (verb === 'test') { tgTestNotification(); return; }
   if (verb === 'refresh') { if (BR) { TG.keysBusy = true; tgRepaint(); } tgRefresh(); return; }
   // ATO-859: `o` and `/telegram pair` start pairing when there is a token and no owner; otherwise they say what to do.
   if (verb === 'pair') { const line = tgPairLine(); if (line) { tgSetMessage(line, 'info'); tgRepaint(); } else tgPairStart(false); return; }
@@ -28577,11 +28620,22 @@ function telegramAct(what) {
   if (verb === 'pairReplace') { tgPairStart(true); return; }
   if (verb === 'pairCancel') { tgPairCancel(); return; }
 }
-/* ATO-900 item 6: Restart agent, from any line in the tab that asks for one. It
-   restarts the agent in place (the app stays open), says so while it runs, then
-   reads the tab again and says the result there: connected, what is still
-   missing, or why the agent did not start. A running reply would end with the
-   restart, so it is refused in place while one runs. */
+/* The explicit Settings action sends once, and ignores a result for a replaced agent or owner. */
+async function tgTestNotification() {
+  if (TG.test.phase === 'sending' || TG.busy) return;
+  const reason = tgTestUnavailable({hasToken:tgHasToken(), owner:tgOwner(), enabled:tgEnabled(), restartOwed:tgRestartOwed(), channel:TG.channel});
+  if (reason) { TG.test = {phase:'failed', text:reason}; tgRepaint(); return; }
+  if (!BR || !BR.telegramTestNotification) { TG.test = {phase:'failed', text:'Update Atomic Agent to send a test notification from Settings.'}; tgRepaint(); return; }
+  const gen = AGENT_GEN;
+  const owner = tgOwner();
+  TG.test = {phase:'sending', text:'Sending a test notification…'}; tgRepaint();
+  let reply;
+  try { reply = await BR.telegramTestNotification(); } catch (e) { reply = {ok:false, error:'Could not reach the agent. Check its connection, then try again.'}; }
+  TG.test = gen === AGENT_GEN && owner === tgOwner() && !tgRestartOwed() && tgEnabled() === true ? tgTestResult(reply) : tgTestInitial();
+  tgRepaint();
+}
+
+/* ATO-900 item 6: Restart agent in place; a running reply must finish first. */
 async function tgRestart() {
   if (!BR || TG.restart.phase === 'restarting') return;
   if (restartStopsTurn()) { TG.restart = tgRestartRefused(); tgRepaint(); return; }

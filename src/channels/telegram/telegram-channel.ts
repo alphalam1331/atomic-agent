@@ -91,6 +91,10 @@ export interface PairingStateSnapshot {
 export type TaskReportDelivery =
   "sent" | "queued" | "channel_not_up" | "not_paired" | "delivery_failed";
 
+/** A manual delivery check is immediate and never enters the task-report queue. */
+export type TestNotificationDelivery =
+  "sent" | "channel_not_up" | "not_paired" | "delivery_failed";
+
 /**
  * Hard cap on reports waiting for the channel to reach `up`. When the
  * queue is full the oldest report is evicted with a warning — bounded
@@ -973,6 +977,26 @@ export class TelegramChannel {
         });
       }
     };
+  }
+
+  /** Send a fixed delivery check only to the live paired owner's private chat. */
+  async sendTestNotification(): Promise<TestNotificationDelivery> {
+    const bot = this.bot;
+    if (this.currentState !== "up" || !bot) return "channel_not_up";
+    const ownerUserId = this.currentOwnerUserId;
+    if (ownerUserId === null) return "not_paired";
+    const result = await sendOutbound({
+      api: bot.api,
+      chatId: ownerUserId,
+      text: "Atomic Agent test notification: Telegram notifications are working.",
+      parseMode: "plain",
+      // A transport error may include the token-bearing URL. The delivery
+      // verdict is enough here; no raw API error leaves this operation.
+      logger: { warn: () => this.deps.logger.warn("telegram test notification delivery failed") },
+    });
+    if (result.dropped > 0) return "delivery_failed";
+    this.deps.metrics?.recordTelegramMessage({ direction: "out" });
+    return "sent";
   }
 
   /**

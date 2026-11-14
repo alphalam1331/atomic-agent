@@ -2855,6 +2855,7 @@ export interface TaskCreateInput {
   /** cron expression, interval seconds, or the `at` Unix-ms — already validated by task-schedule.ts. */
   expression: string;
   tz?: string;
+  notify?: "telegram";
 }
 
 /**
@@ -2871,6 +2872,8 @@ export async function taskCreate(
   cwd?: string,
 ): Promise<{ ok: boolean; id?: string; record?: unknown; error?: string }> {
   const args = ["task", "create", "--message", input.message, "--max-attempts", "3"];
+  if (input.notify !== undefined && input.notify !== "telegram") return { ok: false, error: "notify only supports: telegram" };
+  if (input.notify === "telegram") args.push("--notify", "telegram");
   if (input.kind === "cron") {
     args.push("--cron", input.expression);
     if (input.tz) args.push("--tz", input.tz);

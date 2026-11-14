@@ -32,14 +32,21 @@ const TASK_EMPTY_HINT = 'Press New task and write what to do and when, for examp
  * typed. The request names the agent's task tools so a small local model
  * schedules the work instead of doing it once right now.
  */
-function taskAskMessage(phrase) {
+function taskAskMessage(phrase, notifyTelegram) {
   const text = String(phrase == null ? '' : phrase).replace(/\s+/g, ' ').trim();
   if (!text) return '';
   return 'Set up a scheduled task: ' + text + '\n\n'
     + 'Use your task tools to schedule it (tasks.cron for a repeating schedule, tasks.schedule for a single run). '
+    + (notifyTelegram === true ? 'Set notify: "telegram" on the task so each run\'s final result is sent to my paired Telegram account. ' : '')
     + 'Then tell me the schedule you set and when it runs next.';
 }
 
+/** Task reports go to the paired owner of an enabled Telegram channel. */
+function taskTelegramPaired(config) {
+  return !!config && typeof config === 'object' && config.enabled === true
+    && typeof config.ownerUserId === 'number' && Number.isSafeInteger(config.ownerUserId) && config.ownerUserId > 0;
+}
+
 if (typeof module !== 'undefined') {
-  module.exports = {TASK_ASK_EXAMPLES, TASK_ASK_PLACEHOLDER, TASK_PREVIEW_EMPTY, TASK_EMPTY_HINT, taskAskMessage};
+  module.exports = {TASK_ASK_EXAMPLES, TASK_ASK_PLACEHOLDER, TASK_PREVIEW_EMPTY, TASK_EMPTY_HINT, taskAskMessage, taskTelegramPaired};
 }

@@ -297,7 +297,9 @@ contextBridge.exposeInMainWorld("atomic", {
     ipcRenderer.invoke("agent:telegramPairing", { op, replaceOwner: replaceOwner === true }),
   // ATO-758: the live channel's state and another poller of the same bot.
   telegramChannel: () => ipcRenderer.invoke("agent:telegramChannel"),
-  taskCreate: (input: { message: string; kind: string; expression: string; tz?: string }) =>
+  /** Send one fixed test notification to the paired owner; accepts no recipient or message. */
+  telegramTestNotification: () => ipcRenderer.invoke("agent:telegramTestNotification"),
+  taskCreate: (input: { message: string; kind: string; expression: string; tz?: string; notify?: "telegram" }) =>
     ipcRenderer.invoke("cli:taskCreate", input),
   taskPreview: (form: Record<string, string>, now?: number) =>
     ipcRenderer.invoke("app:taskPreview", { form, now }),

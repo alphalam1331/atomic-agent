@@ -88,4 +88,5 @@ export function wireAgentLiveIpc(client: AgentClient): void {
   });
   // ATO-758: why the bot does not answer, when another poller holds it off.
   ipcMain.handle("agent:telegramChannel", () => client.telegramChannel());
+  ipcMain.handle("agent:telegramTestNotification", () => client.telegramTestNotification());
 }

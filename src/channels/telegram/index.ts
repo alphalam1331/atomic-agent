@@ -9,6 +9,7 @@ export type {
   PairingStateSnapshot,
   StartPairingOptions,
   TaskReportDelivery,
+  TestNotificationDelivery,
   TelegramChannelDeps,
 } from "./telegram-channel.js";
 export {

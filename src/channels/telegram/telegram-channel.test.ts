@@ -232,6 +232,72 @@ describe("TelegramChannel", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
+  it("sends a fixed test notification only to the paired owner's DM", async () => {
+    const { factory, state } = makeBotFactory();
+    const channel = new TelegramChannel({
+      runtime: fakeRuntime(), config: makeConfig(dir, 4242), token: "1234:abcdef",
+      logger, botFactory: factory, lock: fakeLock().lock,
+    });
+    await channel.start();
+    try {
+      expect(await channel.sendTestNotification()).toBe("sent");
+      expect(state.sendMessageCalls).toEqual([{
+        chatId: 4242,
+        text: "Atomic Agent test notification: Telegram notifications are working.",
+      }]);
+    } finally {
+      await channel.stop();
+    }
+  });
+
+  it("does not queue a test notification while the channel is down", async () => {
+    const { factory, state } = makeBotFactory();
+    const channel = new TelegramChannel({
+      runtime: fakeRuntime(), config: makeConfig(dir), token: "1234:abcdef",
+      logger, botFactory: factory, lock: fakeLock().lock,
+    });
+    expect(await channel.sendTestNotification()).toBe("channel_not_up");
+    await channel.start();
+    try {
+      expect(state.sendMessageCalls).toEqual([]);
+    } finally {
+      await channel.stop();
+    }
+  });
+
+  it("does not send a test notification before the owner pairs", async () => {
+    const { factory, state } = makeBotFactory();
+    const channel = new TelegramChannel({
+      runtime: fakeRuntime(), config: makeConfig(dir, null), token: "1234:abcdef",
+      logger, botFactory: factory, lock: fakeLock().lock,
+    });
+    await channel.start();
+    try {
+      expect(await channel.sendTestNotification()).toBe("not_paired");
+      expect(state.sendMessageCalls).toEqual([]);
+    } finally {
+      await channel.stop();
+    }
+  });
+
+  it("reports a failed test notification without logging the token-bearing error", async () => {
+    const records: LogRecord[] = [];
+    const { factory } = makeBotFactory({ sendMessageError: new Error("failed https://api.telegram.org/bot1234:abcdef/sendMessage") });
+    const channel = new TelegramChannel({
+      runtime: fakeRuntime(), config: makeConfig(dir), token: "1234:abcdef",
+      logger: new StructuredLogger({ level: "warn", sinks: [(record) => records.push(record)] }),
+      botFactory: factory, lock: fakeLock().lock,
+    });
+    await channel.start();
+    try {
+      expect(await channel.sendTestNotification()).toBe("delivery_failed");
+      expect(records.some((record) => record.message === "telegram test notification delivery failed")).toBe(true);
+      expect(JSON.stringify(records)).not.toContain("1234:abcdef");
+    } finally {
+      await channel.stop();
+    }
+  });
+
   it("goes down when the polling loop dies underneath it", async () => {
     // The bug this pins: `bot.start()` is fire-and-forget, so when
     // Telegram killed the poller (a second process on the same token

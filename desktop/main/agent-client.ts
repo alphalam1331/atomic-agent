@@ -19,6 +19,7 @@ import {
   type TelegramPairingOp,
   type TelegramPairingResult,
 } from "./telegram-pairing.js";
+import { readTelegramTestReply, TELEGRAM_TEST_PATH, type TelegramTestResult } from "./telegram-test-notification.js";
 import {
   agentBinaryCandidates,
   bundledAgentFileName,
@@ -1432,6 +1433,20 @@ export class AgentClient extends EventEmitter {
         signal: AbortSignal.timeout(10_000),
       });
       return readPairingReply(res.status, await res.text());
+    } catch (err) {
+      return { ok: false, error: requestErrorText(err) };
+    }
+  }
+
+  /** Send a fixed test message to this agent's paired owner, only on a Settings click. */
+  async telegramTestNotification(): Promise<TelegramTestResult> {
+    try {
+      const res = await fetch(`${this.base()}${TELEGRAM_TEST_PATH}`, {
+        method: "POST",
+        headers: this.headers(),
+        signal: AbortSignal.timeout(60_000),
+      });
+      return readTelegramTestReply(res.status, await res.text());
     } catch (err) {
       return { ok: false, error: requestErrorText(err) };
     }
