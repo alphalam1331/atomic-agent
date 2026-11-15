@@ -15,7 +15,7 @@ export type TaskSchedule =
   | { kind: "cron"; expression: string; tz?: string };
 
 export interface TaskCreateFormInput {
-  kind: "cron" | "interval" | "at";
+  kind: "cron" | "interval" | "at" | "immediate";
   cronExpression: string;
   intervalSeconds: string;
   atIsoOrMs: string;
@@ -153,6 +153,11 @@ export function validateCreateForm(form: TaskCreateFormInput, now: number): Task
   if (message.length > TASK_USER_MESSAGE_MAX_LENGTH) {
     return failure(`user message must be <= ${TASK_USER_MESSAGE_MAX_LENGTH} chars`, message);
   }
+  // Editing an eager task can preserve its lack of a schedule. Creation's IPC
+  // still accepts only cron / interval / at, so this cannot create eager tasks.
+  if (form.kind === "immediate") {
+    return { schedule: null, preview: { ok: true, error: null, nextFirings: [] }, message };
+  }
   const scheduleResult = parseSchedule(form, now);
   if (scheduleResult.error !== null) {
     return {
@@ -193,12 +198,12 @@ function parseCron(form: TaskCreateFormInput, now: number): ParsedSchedule {
 
 function parseInterval(form: TaskCreateFormInput, now: number): ParsedSchedule {
   const raw = (form.intervalSeconds ?? "").trim();
-  if (raw.length === 0) return fail("interval must be a positive integer number of seconds");
-  const seconds = Number.parseInt(raw, 10);
-  if (!Number.isFinite(seconds) || `${seconds}` !== raw) {
-    return fail("interval must be a positive integer number of seconds");
+  if (!/^\d+(?:\.\d{1,3})?$/.test(raw)) return fail("interval must be a positive number of seconds, with millisecond precision");
+  const seconds = Number(raw);
+  if (!Number.isFinite(seconds)) {
+    return fail("interval must be a positive number of seconds");
   }
-  const schedule: TaskSchedule = { kind: "interval", everyMs: seconds * 1_000 };
+  const schedule: TaskSchedule = { kind: "interval", everyMs: Math.round(seconds * 1_000) };
   try {
     validateSchedule(schedule, now);
     return { schedule, error: null };

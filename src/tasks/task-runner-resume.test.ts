@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -119,6 +119,25 @@ describe("TaskRunner resume", () => {
     });
     // The first crash resume starts at once.
     expect(sleeps).toEqual([]);
+  });
+
+  it("uses an edit committed between the queue read and claim instead of resuming the old request", async () => {
+    const id = crashedTask(12);
+    const other = new TaskStore({ dbFile: join(tmp, "tasks.sqlite") });
+    const claim = store.claim.bind(store);
+    vi.spyOn(store, "claim").mockImplementationOnce((taskId, now, dueAt) => {
+      other.update(taskId, { userMessage: "NEW REQUEST" });
+      return claim(taskId, now, dueAt);
+    });
+    try {
+      expect((await runner().runOne(id))?.status).toBe("completed");
+      expect(calls).toEqual([{
+        userMessage: "NEW REQUEST",
+        checkpoint: { taskId: id, resumes: 0, request: "NEW REQUEST" },
+      }]);
+    } finally {
+      other.close();
+    }
   });
 
   it("backs off a repeated crash resume", async () => {

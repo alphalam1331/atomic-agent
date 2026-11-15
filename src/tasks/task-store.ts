@@ -21,12 +21,20 @@ import {
   validateMaxCostUsd,
   validateMaxDurationMs,
 } from "./task-budget.js";
-import { parseScheduleRow, serializeScheduleValue } from "./task-schedule.js";
+import {
+  isRecurring,
+  parseScheduleRow,
+  resolveScheduledFor,
+  sameSchedule,
+  serializeScheduleValue,
+  validateSchedule,
+} from "./task-schedule.js";
 import {
   TASK_LAST_ERROR_MAX_LENGTH,
   TASK_NOTIFY_TARGETS,
   TASK_USER_MESSAGE_MAX_LENGTH,
   TaskStateError,
+  TaskOperationError,
   TaskValidationError,
   type TaskNotifyTarget,
   type TaskOrigin,
@@ -56,6 +64,9 @@ export const TASK_INTERRUPTED_ERROR =
 
 /** `last_error` of a row the boot sweep took back from a process that is gone. */
 export const TASK_OWNER_GONE_ERROR = "interrupted: the agent running it stopped";
+
+/** Durable stop intent: recovery must skip the stopped recurring firing. */
+export const TASK_STOP_REQUESTED_ERROR = "stopped: the current run was stopped by the operator";
 
 export interface TaskCreateInput {
   /**
@@ -103,6 +114,13 @@ export interface TaskListOptions {
   limit?: number;
 }
 
+/** Editable task intent. Omitted fields retain their persisted values. */
+export interface TaskUpdateInput {
+  userMessage?: string;
+  schedule?: TaskSchedule | null;
+  notify?: TaskNotifyTarget | null;
+}
+
 export interface TaskFailureInput {
   category: LlmFailureCategory;
   message: string;
@@ -142,6 +160,7 @@ interface RunningRow {
   id: string;
   started_at: number | null;
   run_owner: string | null;
+  last_error: string | null;
 }
 
 const TERMINAL_STATUSES: ReadonlySet<TaskStatus> = new Set([
@@ -286,7 +305,8 @@ export class TaskStore {
               updated_at = @now,
               last_error = NULL,
               last_error_cat = NULL${claimOwner}
-        WHERE id = @id AND status = 'pending'`,
+        WHERE id = @id AND status = 'pending'
+          AND (@due_at IS NULL OR scheduled_for IS NULL OR scheduled_for <= @due_at)`,
     );
     this.markCompletedStmt = this.db.prepare(
       `UPDATE tasks
@@ -332,7 +352,7 @@ export class TaskStore {
         WHERE id = @id AND status IN ('pending', 'running')`,
     );
     this.listRunningStmt = this.db.prepare(
-      `SELECT id, started_at, ${withOwners ? "run_owner" : "NULL AS run_owner"}
+      `SELECT id, started_at, last_error, ${withOwners ? "run_owner" : "NULL AS run_owner"}
          FROM tasks WHERE status = 'running'`,
     );
     // Keyed on the claim the sweep judged (`started_at`), so a row
@@ -341,6 +361,7 @@ export class TaskStore {
       `UPDATE tasks
           SET status = 'pending',
               updated_at = @now,
+              attempts = CASE WHEN @operator_stopped THEN 0 ELSE attempts END,
               started_at = NULL,
               last_error = COALESCE(last_error, @last_error),
               last_error_cat = COALESCE(last_error_cat, 'transport')
@@ -502,6 +523,82 @@ export class TaskStore {
     return rowToRecord(row);
   }
 
+  /** Edit pending work atomically with its state check; never reactivate history. */
+  update(
+    id: string,
+    input: TaskUpdateInput,
+    now: number = Date.now(),
+  ): TaskRecord | null {
+    const edit = this.db.transaction(() => {
+      const existing = this.get(id);
+      if (!existing) return null;
+      if (existing.status !== "pending") {
+        throw new TaskOperationError("update", existing.status, "Only pending tasks can be edited.");
+      }
+      const userMessage = input.userMessage === undefined
+        ? existing.userMessage : validateUserMessage(input.userMessage);
+      const notify = input.notify === undefined ? existing.notify : validateNotify(input.notify);
+      const schedule = input.schedule === undefined ? existing.schedule : input.schedule;
+      if (input.schedule !== undefined && input.schedule !== null) validateSchedule(input.schedule, now);
+      const scheduleChanged = !sameSchedule(schedule, existing.schedule);
+      const scheduledFor = scheduleChanged
+        ? schedule === null ? null : resolveScheduledFor(schedule, now)
+        : existing.scheduledFor;
+      const messageChanged = userMessage !== existing.userMessage;
+      this.db.prepare(
+        `UPDATE tasks SET user_message = @user_message, notify = @notify,
+           schedule_kind = @schedule_kind, schedule_value = @schedule_value,
+           recurring = @recurring, scheduled_for = @scheduled_for,
+           last_scheduled_at = @last_scheduled_at, updated_at = @now,
+           last_error = @last_error, last_error_cat = @last_error_cat
+         WHERE id = @id AND status = 'pending'`,
+      ).run({
+        id, now, user_message: userMessage, notify,
+        schedule_kind: schedule?.kind ?? null,
+        schedule_value: schedule ? serializeScheduleValue(schedule) : null,
+        recurring: isRecurring(schedule) ? 1 : 0,
+        scheduled_for: scheduledFor,
+        last_scheduled_at: scheduleChanged ? now : existing.lastScheduledAt,
+        // An edited request starts fresh, not from the old request's crash checkpoint.
+        last_error: messageChanged ? null : existing.lastError,
+        last_error_cat: messageChanged ? null : existing.lastErrorCategory,
+      });
+      return this.requireRecord(id);
+    });
+    return edit.immediate();
+  }
+
+  /** Persist stop intent against this exact claim before its controller is aborted. */
+  requestStop(id: string, startedAt: number | null, now: number = Date.now()): TaskRecord | null {
+    const stop = this.db.transaction(() => {
+      const existing = this.get(id);
+      if (!existing || existing.status !== "running" || existing.startedAt !== startedAt) return null;
+      if (!existing.recurring || !existing.schedule) return this.cancel(id, now);
+      const next = resolveScheduledFor(existing.schedule, now);
+      this.db.prepare(
+        `UPDATE tasks SET scheduled_for = @next, last_scheduled_at = @now,
+           last_error = @error, last_error_cat = 'cancelled', updated_at = @now
+         WHERE id = @id AND status = 'running' AND started_at IS @started_at`,
+      ).run({ id, next, now, error: TASK_STOP_REQUESTED_ERROR, started_at: startedAt });
+      return this.requireRecord(id);
+    });
+    return stop.immediate();
+  }
+
+  /** Remove cancelled history only. The runner guards its active unwinding runs. */
+  removeCancelled(id: string): TaskRecord | null {
+    const remove = this.db.transaction(() => {
+      const existing = this.get(id);
+      if (!existing) return null;
+      if (existing.status !== "cancelled") {
+        throw new TaskOperationError("remove", existing.status, "Only cancelled tasks can be removed.");
+      }
+      this.db.prepare(`DELETE FROM tasks WHERE id = ? AND status = 'cancelled'`).run(id);
+      return existing;
+    });
+    return remove.immediate();
+  }
+
   list(options: TaskListOptions = {}): TaskRecord[] {
     const limit = options.limit ?? 100;
     const rows = options.sessionId
@@ -554,18 +651,35 @@ export class TaskStore {
    * the row without raising — concurrent drains coordinate via this
    * race.
    */
-  markRunning(id: string, now: number = Date.now()): TaskRecord | null {
-    const owner =
-      this.runOwnersUnavailable === null
-        ? serializeTurnOwner(
-            turnOwnerFor(this.ownerProbe, now, this.dbIdentity),
-          )
+  markRunning(
+    id: string,
+    now: number = Date.now(),
+    /** Scheduler claims recheck eligibility atomically after pending edits. */
+    dueAt?: number,
+  ): TaskRecord | null {
+    return this.claim(id, now, dueAt)?.task ?? null;
+  }
+
+  /** Capture resume intent and claim under one write lock, so an edit cannot split them. */
+  claim(
+    id: string,
+    now: number = Date.now(),
+    dueAt?: number,
+  ): { task: TaskRecord; previous: TaskRecord } | null {
+    const claim = this.db.transaction(() => {
+      const previous = this.get(id);
+      if (!previous || previous.status !== "pending") return null;
+      const owner = this.runOwnersUnavailable === null
+        ? serializeTurnOwner(turnOwnerFor(this.ownerProbe, now, this.dbIdentity))
         : null;
-    const result = this.markRunningStmt.run(
-      owner === null ? { id, now } : { id, now, owner },
-    ) as { changes: number };
-    if (result.changes === 0) return null;
-    return this.get(id);
+      const parameters = { id, now, due_at: dueAt ?? null };
+      const result = this.markRunningStmt.run(
+        owner === null ? parameters : { ...parameters, owner },
+      ) as { changes: number };
+      if (result.changes === 0) return null;
+      return { task: this.requireRecord(id), previous };
+    });
+    return claim.immediate();
   }
 
   markCompleted(id: string, now: number = Date.now()): TaskRecord {
@@ -747,11 +861,17 @@ export class TaskStore {
           id: row.id,
           now,
           started_at: row.started_at,
+          operator_stopped: row.last_error === TASK_STOP_REQUESTED_ERROR ? 1 : 0,
           last_error: ownsThisRun
             ? TASK_OWNER_GONE_ERROR
             : "recovered from stale running",
         }) as { changes: number };
-        if (result.changes > 0) recovered.push(row.id);
+        if (result.changes > 0) {
+          if (row.last_error === TASK_STOP_REQUESTED_ERROR) {
+            this.resetSpendStmt?.run({ id: row.id });
+          }
+          recovered.push(row.id);
+        }
       }
       return recovered;
     });

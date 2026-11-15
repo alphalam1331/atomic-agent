@@ -16,6 +16,7 @@ function source(name) {
 function fixture(config = {enabled:true, ownerUserId:12345}) {
   const calls = [], actions = [], sent = [];
   const context = createContext({
+    clearTimeout,
     ...helpers, AGENT_GEN:1, TK:{mode:"create", form:null}, S:{settings:1, settingsPane:"tasks", draft:""},
     BR:{configGetKey:async () => ({ok:true, value:config}), taskCreate:async input => { calls.push(input); return {ok:true, id:"task-1"}; }},
     esc:String, ic:() => "", setSwitchHTML: o => '<button data-act="' + o.act + '" role="switch" aria-checked="' + !!o.on + '"' + (o.disabled ? ' disabled' : '') + '></button>',

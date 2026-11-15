@@ -216,3 +216,15 @@ export class TaskStateError extends Error {
     this.name = "TaskStateError";
   }
 }
+
+/** An operator action cannot be applied to the task in its current state. */
+export class TaskOperationError extends Error {
+  constructor(
+    public readonly operation: "update" | "stop" | "remove",
+    public readonly status: TaskStatus,
+    message: string,
+  ) {
+    super(message);
+    this.name = "TaskOperationError";
+  }
+}

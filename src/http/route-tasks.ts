@@ -1,5 +1,7 @@
 import { openaiError } from "./openai-errors.js";
 import {
+  BodyParseError,
+  BodyTooLargeError,
   readJsonBody,
   sendError,
   sendJson,
@@ -8,9 +10,11 @@ import {
 import { checkWorkingDir } from "./session-working-dir.js";
 import {
   TaskStateError,
+  TaskOperationError,
   TaskValidationError,
   type TaskRecord,
   type TaskStatus,
+  type TaskUpdateInput,
 } from "../tasks/index.js";
 import {
   validateMaxCostUsd,
@@ -237,6 +241,116 @@ export function createCancelTaskHandler(): HttpHandler {
       return;
     }
     sendJson(res, 200, recordToJson(cancelled));
+  };
+}
+
+/** Edit pending work through the runner, retaining its session and run history. */
+export function createUpdateTaskHandler(): HttpHandler {
+  return async (req, res, ctx) => {
+    if (!ctx.runtime.config.tasks.enabled) {
+      sendError(res, 404, openaiError("tasks subsystem disabled"));
+      return;
+    }
+    const id = ctx.params.id;
+    if (!id) {
+      sendError(res, 400, openaiError("task id is required"));
+      return;
+    }
+    try {
+      const body = await readJsonBody<unknown>(req);
+      if (!body || typeof body !== "object" || Array.isArray(body)) {
+        sendError(res, 400, openaiError("task update must be an object"));
+        return;
+      }
+      const fields = Object.keys(body);
+      const allowed = ["userMessage", "schedule", "notify"];
+      if (fields.length === 0 || fields.some((field) => !allowed.includes(field))) {
+        sendError(res, 400, openaiError("send userMessage, schedule or notify only"));
+        return;
+      }
+      // Runtime validation owns message, schedule and destination constraints,
+      // including the configured minimum recurring interval.
+      const updated = ctx.runtime.taskRunner.update(id, body as TaskUpdateInput);
+      if (!updated) {
+        sendError(res, 404, openaiError(`task not found: ${id}`));
+        return;
+      }
+      sendJson(res, 200, recordToJson(updated));
+    } catch (err) {
+      if (err instanceof TaskOperationError) {
+        sendError(res, 409, openaiError(err.message));
+        return;
+      }
+      if (err instanceof TaskValidationError) {
+        sendError(res, 400, openaiError(err.message, "invalid_request_error", err.field));
+        return;
+      }
+      // Body parsing errors are invalid requests; unexpected runtime failures
+      // retain the server's standard 500 handling.
+      if (err instanceof BodyParseError || err instanceof BodyTooLargeError) {
+        sendError(res, 400, openaiError(err.message));
+        return;
+      }
+      throw err;
+    }
+  };
+}
+
+/** Stop this run, preserving the next firing of a recurring task. */
+export function createStopTaskHandler(): HttpHandler {
+  return async (_req, res, ctx) => {
+    if (!ctx.runtime.config.tasks.enabled) {
+      sendError(res, 404, openaiError("tasks subsystem disabled"));
+      return;
+    }
+    const id = ctx.params.id;
+    if (!id) {
+      sendError(res, 400, openaiError("task id is required"));
+      return;
+    }
+    try {
+      const result = await ctx.runtime.taskRunner.stopTask(id);
+      if (!result) {
+        sendError(res, 404, openaiError(`task not found: ${id}`));
+        return;
+      }
+      sendJson(res, 200, { task: recordToJson(result.task), stopping: result.stopping });
+    } catch (err) {
+      if (err instanceof TaskOperationError) {
+        sendError(res, 409, openaiError(err.message));
+        return;
+      }
+      throw err;
+    }
+  };
+}
+
+/** Remove a cancelled record only after its owned run has finished unwinding. */
+export function createRemoveTaskHandler(): HttpHandler {
+  return async (_req, res, ctx) => {
+    if (!ctx.runtime.config.tasks.enabled) {
+      sendError(res, 404, openaiError("tasks subsystem disabled"));
+      return;
+    }
+    const id = ctx.params.id;
+    if (!id) {
+      sendError(res, 400, openaiError("task id is required"));
+      return;
+    }
+    try {
+      const removed = ctx.runtime.taskRunner.removeCancelled(id);
+      if (!removed) {
+        sendError(res, 404, openaiError(`task not found: ${id}`));
+        return;
+      }
+      sendJson(res, 200, { removed: true, id: removed.id });
+    } catch (err) {
+      if (err instanceof TaskOperationError) {
+        sendError(res, 409, openaiError(err.message));
+        return;
+      }
+      throw err;
+    }
   };
 }
 

@@ -177,6 +177,16 @@ export function serializeScheduleValue(schedule: TaskSchedule): string {
   });
 }
 
+/** Canonical comparison also ignores an omitted/empty cron timezone. */
+export function sameSchedule(
+  left: TaskSchedule | null,
+  right: TaskSchedule | null,
+): boolean {
+  if (left === null || right === null) return left === right;
+  return left.kind === right.kind &&
+    serializeScheduleValue(left) === serializeScheduleValue(right);
+}
+
 /**
  * Preview the next `count` firings for a schedule without committing
  * anything to the store. Used by the TUI create form to render a

@@ -25,18 +25,19 @@ import {
   type TaskLiveStatus,
   type TaskRunSummaryCollector,
 } from "./task-run-summary.js";
-import { isRecurring, resolveScheduledFor } from "./task-schedule.js";
+import { isRecurring, resolveScheduledFor, sameSchedule, validateSchedule } from "./task-schedule.js";
 import { formatRunTime, remainingCostUsd, remainingDurationMs } from "./task-budget.js";
 import { formatUsd } from "../llm/provider/usage-cost.js";
 import { startTaskSnapshots, type TaskSnapshotSink } from "./task-snapshot.js";
 import {
   TaskValidationError,
+  TaskOperationError,
   type TaskRecord,
   type TaskSchedule,
   type TaskStatus,
   type TriggerSource,
 } from "./task-types.js";
-import type { TaskCreateInput, TaskStore } from "./task-store.js";
+import type { TaskCreateInput, TaskStore, TaskUpdateInput } from "./task-store.js";
 import { TASK_OWNER_GONE_ERROR } from "./task-store.js";
 
 /**
@@ -129,8 +130,8 @@ export interface TaskRunnerOptions {
   /**
    * `tasks.minIntervalMs`: the operator's floor on a new `interval`
    * schedule's `everyMs`, on top of the fixed 1 000 ms in
-   * `task-schedule.ts`. Checked at `create` only, so raising it never
-   * strands a task that already runs at a shorter interval.
+   * `task-schedule.ts`. Checked at creation and when a schedule changes,
+   * so raising it never strands an unchanged shorter interval.
    */
   minIntervalMs?: number;
   /**
@@ -186,7 +187,15 @@ export interface DrainOptions {
 interface InFlightRun {
   readonly controller: AbortController;
   readonly settled: Promise<void>;
+  readonly startedAt: number | null;
+  operatorStopped: boolean;
   ended: boolean;
+}
+
+export interface TaskStopOutcome {
+  task: TaskRecord;
+  /** The abort was requested, but the turn has not settled within the grace. */
+  stopping: boolean;
 }
 
 export interface DrainOutcome {
@@ -334,6 +343,61 @@ export class TaskRunner {
     return record;
   }
 
+  update(id: string, input: TaskUpdateInput, now: number = Date.now()): TaskRecord | null {
+    const existing = this.options.store.get(id);
+    if (!existing) return null;
+    if (input.schedule !== undefined && input.schedule !== null) {
+      validateSchedule(input.schedule, now);
+      if (!sameSchedule(input.schedule, existing.schedule) &&
+          input.schedule.kind === "interval" &&
+          this.options.minIntervalMs !== undefined &&
+          input.schedule.everyMs < this.options.minIntervalMs) {
+        throw new TaskValidationError("schedule", `schedule.everyMs must be >= ${this.options.minIntervalMs} (tasks.minIntervalMs)`);
+      }
+    }
+    return this.options.store.update(id, input, now);
+  }
+
+  /** Stop this run, retaining a recurring task's future schedule. */
+  async stopTask(id: string, graceMs = 1_500): Promise<TaskStopOutcome | null> {
+    const existing = this.options.store.get(id);
+    if (!existing) return null;
+    if (existing.status !== "running") {
+      throw new TaskOperationError("stop", existing.status, "Only running tasks can be stopped.");
+    }
+    const run = this.runs.get(id);
+    if (!run || run.startedAt !== existing.startedAt) {
+      throw new TaskOperationError("stop", existing.status, "This task is running in another agent process. Stop it from that process.");
+    }
+    const requested = this.options.store.requestStop(id, existing.startedAt);
+    if (!requested) {
+      const current = this.options.store.get(id);
+      if (!current) return null;
+      throw new TaskOperationError("stop", current.status, "The task changed before it could be stopped. Refresh and try again.");
+    }
+    run.operatorStopped = true;
+    run.controller.abort();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([run.settled, new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, graceMs);
+      })]);
+    } finally {
+      clearTimeout(timer);
+    }
+    const task = this.options.store.get(id);
+    return task ? { task, stopping: !run.ended } : null;
+  }
+
+  removeCancelled(id: string): TaskRecord | null {
+    const existing = this.options.store.get(id);
+    if (!existing) return null;
+    if (this.runs.has(id)) {
+      throw new TaskOperationError("remove", existing.status, "Wait for the task's running turn to stop before removing it.");
+    }
+    return this.options.store.removeCancelled(id);
+  }
+
   /**
    * Execute one attempt of `taskId`. Returns the post-attempt record
    * regardless of outcome. Returns `null` when the task vanished or was
@@ -343,19 +407,23 @@ export class TaskRunner {
   async runOne(
     taskId: string,
     runtimeSignal?: AbortSignal,
+    /** Internal scheduler cutoff; omitted by explicit Run now calls. */
+    dueAt?: number,
   ): Promise<TaskRecord | null> {
     if (this.stopping) return null;
     const task = this.options.store.get(taskId);
     if (!task) return null;
     if (task.status !== "pending") return task;
+    if (dueAt !== undefined && task.scheduledFor !== null && task.scheduledFor > dueAt) return null;
 
     const resolvedTask = this.ensureSessionBeforeClaim(task);
     if (!resolvedTask) {
       return this.options.store.get(task.id);
     }
 
-    const claimed = this.options.store.markRunning(resolvedTask.id);
-    if (!claimed) return this.options.store.get(resolvedTask.id);
+    const claim = this.options.store.claim(resolvedTask.id, Date.now(), dueAt);
+    if (!claim) return dueAt === undefined ? this.options.store.get(resolvedTask.id) : null;
+    const claimed = claim.task;
 
     this.options.metrics?.recordTaskStarted({
       taskId: claimed.id,
@@ -411,9 +479,9 @@ export class TaskRunner {
 
     this.stampWakeReason(session, claimed);
 
-    // `task` is the row as it was before the claim, which cleared the
-    // reason it was put back for.
-    const plan = this.planResume(task, session.id);
+    // Read inside the claim transaction: an operator may have edited
+    // the request after the earlier queue read, clearing its checkpoint intent.
+    const plan = this.planResume(claim.previous, session.id);
     if (plan.kind === "give_up") {
       return this.giveUpResuming(claimed, plan, session.id);
     }
@@ -507,7 +575,7 @@ export class TaskRunner {
     // (`cancel`), the runner stopping for shutdown (`stop`), and the
     // drain's signal — the scheduler aborts its own when the agent quits
     // — all end the turn through it.
-    const run = this.beginRun(claimed.id, runtimeSignal);
+    const run = this.beginRun(claimed, runtimeSignal);
     // Set once the turn is about to start. A crash resume stopped before
     // that (during its backoff) never wrote its resume count into the
     // session's marker (`beginTurn` does), so the task goes back still
@@ -554,7 +622,7 @@ export class TaskRunner {
           return this.handleCancelled(
             claimed,
             err,
-            this.interrupted(runtimeSignal),
+            !run.operatorStopped() && this.interrupted(runtimeSignal),
             !turnStarted && plan.kind === "resume" && plan.crashed
               ? TASK_OWNER_GONE_ERROR
               : undefined,
@@ -593,12 +661,12 @@ export class TaskRunner {
       }
       if (
         result.reason === "cancelled" ||
-        (result.reason === "failed" && run.signal.aborted)
+        run.signal.aborted
       ) {
         return this.handleCancelled(
           claimed,
           new Error("turn cancelled"),
-          this.interrupted(runtimeSignal),
+          !run.operatorStopped() && this.interrupted(runtimeSignal),
         );
       }
       if (result.reason === "failed") {
@@ -783,9 +851,9 @@ export class TaskRunner {
    * outcome is written. Its signal aborts with `outer` (the drain's).
    */
   private beginRun(
-    taskId: string,
+    task: TaskRecord,
     outer: AbortSignal | undefined,
-  ): { signal: AbortSignal; end(): void } {
+  ): { signal: AbortSignal; operatorStopped(): boolean; end(): void } {
     const controller = new AbortController();
     const onOuterAbort = (): void => controller.abort(outer?.reason);
     if (this.stopping || outer?.aborted === true) {
@@ -797,15 +865,16 @@ export class TaskRunner {
     const settled = new Promise<void>((resolve) => {
       resolveSettled = resolve;
     });
-    const run: InFlightRun = { controller, settled, ended: false };
-    this.runs.set(taskId, run);
+    const run: InFlightRun = { controller, settled, startedAt: task.startedAt, operatorStopped: false, ended: false };
+    this.runs.set(task.id, run);
     return {
       signal: controller.signal,
+      operatorStopped: () => run.operatorStopped,
       end: () => {
         if (run.ended) return;
         run.ended = true;
         outer?.removeEventListener("abort", onOuterAbort);
-        if (this.runs.get(taskId) === run) this.runs.delete(taskId);
+        if (this.runs.get(task.id) === run) this.runs.delete(task.id);
         resolveSettled();
       },
     };
@@ -867,19 +936,20 @@ export class TaskRunner {
   ): Promise<DrainOutcome> {
     if (!this.options.enabled) return emptyOutcome();
     const due = this.options.store.listDue(now, limit);
-    return this.drainBatch(due, signal);
+    return this.drainBatch(due, signal, now);
   }
 
   private async drainBatch(
     tasks: TaskRecord[],
     signal?: AbortSignal,
+    dueAt?: number,
   ): Promise<DrainOutcome> {
     const outcome = emptyOutcome();
     if (tasks.length === 0) return outcome;
     const grouped = groupBySession(tasks);
     await Promise.all(
       [...grouped.values()].map((group) =>
-        this.drainSessionGroup(group, signal, outcome),
+        this.drainSessionGroup(group, signal, outcome, dueAt),
       ),
     );
     return outcome;
@@ -889,6 +959,7 @@ export class TaskRunner {
     initialGroup: TaskRecord[],
     signal: AbortSignal | undefined,
     outcome: DrainOutcome,
+    dueAt?: number,
   ): Promise<void> {
     for (const task of initialGroup) {
       if (signal?.aborted || this.stopping) return;
@@ -896,9 +967,9 @@ export class TaskRunner {
       while (current && current.status === "pending") {
         if (signal?.aborted || this.stopping) return;
         const before = current;
-        current = await this.runOne(current.id, signal);
-        outcome.drained += 1;
+        current = await this.runOne(current.id, signal, dueAt);
         if (!current) break;
+        outcome.drained += 1;
         if (current.status === "completed") outcome.completed += 1;
         else if (current.status === "failed") outcome.failed += 1;
         else if (current.status === "blocked") outcome.blocked += 1;

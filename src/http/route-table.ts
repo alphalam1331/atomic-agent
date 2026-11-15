@@ -52,7 +52,10 @@ import {
   createDrainTasksHandler,
   createGetTaskHandler,
   createListTasksHandler,
+  createRemoveTaskHandler,
   createRunTaskHandler,
+  createStopTaskHandler,
+  createUpdateTaskHandler,
 } from "./route-tasks.js";
 import { createWebhookHandler } from "./route-webhooks.js";
 import { createCodingModeHandlers } from "./route-coding-mode.js";
@@ -242,6 +245,9 @@ export function buildRouteTable(): RouteDefinition[] {
     { method: "POST", path: "/api/tasks", handler: createCreateTaskHandler() },
     { method: "GET", path: "/api/tasks", handler: createListTasksHandler() },
     { method: "GET", path: "/api/tasks/{id}", handler: createGetTaskHandler() },
+    { method: "PATCH", path: "/api/tasks/{id}", handler: createUpdateTaskHandler() },
+    { method: "POST", path: "/api/tasks/{id}/stop", handler: createStopTaskHandler() },
+    { method: "DELETE", path: "/api/tasks/{id}/record", handler: createRemoveTaskHandler() },
     {
       method: "DELETE",
       path: "/api/tasks/{id}",

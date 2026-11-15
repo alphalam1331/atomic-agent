@@ -620,6 +620,16 @@ Honestly degraded, and labelled as such in the UI:
   plain-language request asks the agent to set `notify: "telegram"`; the manual
   form passes `--notify telegram` to task creation. Task details show the
   report destination. With no tasks at all the list hides its filters and search.
+  A pending task's detail has **Edit task**: the manual form keeps its full
+  message, schedule, time zone and report destination, and **Save changes**
+  updates that same record. Editing preserves an existing Telegram choice when
+  setup cannot be read. Running and terminal tasks cannot be edited. **Stop run**
+  aborts the current run: a recurring task keeps its next scheduled run, while a
+  one-time task becomes cancelled. **Cancel task** still cancels the whole
+  schedule. A cancelled task has **Remove task**, with confirmation; removal
+  keeps its chat history and is refused until its running turn has finished stopping.
+  The edit, stop and removal calls target the connected agent over authenticated
+  HTTP. A task running in another process must be stopped from that process.
   The firings feed is not exposed by the HTTP API, so the task page has no
   Recent firings section.
 - **Skills** in cloud mode read the selected session's live workspace catalog

@@ -285,6 +285,9 @@ contextBridge.exposeInMainWorld("atomic", {
   /** Item 7 (settings surface): tasks, health, schedule preview. */
   task: (id: string) => ipcRenderer.invoke("agent:task", id),
   cancelTask: (id: string) => ipcRenderer.invoke("agent:cancelTask", id),
+  updateTask: (id: string, patch: Record<string, unknown>) => ipcRenderer.invoke("agent:updateTask", id, patch),
+  stopTask: (id: string) => ipcRenderer.invoke("agent:stopTask", id),
+  removeTask: (id: string) => ipcRenderer.invoke("agent:removeTask", id),
   runTask: (id: string) => ipcRenderer.invoke("agent:runTask", id),
   health: () => ipcRenderer.invoke("agent:health"),
   /** ATO-134: whether the agent runs a turn this window does not stream (a scheduled task, Telegram), for a switch to wait on. */

@@ -1270,7 +1270,7 @@ const SK = { rows:null, busy:false, err:null, calls:0, at:null, for:null, workin
 const TK = {
   rows:[], filter:'all', search:'', searchOpen:false, auto:true, lastRefreshedAt:null, loading:false,
   primed:false, mode:'list', cursor:0, detailId:null, cancel:null, msg:null, err:null, timer:null,
-  form:null,
+  form:null, action:null, remove:null, stopping:new Set(),
   note:null, // muted line under `msg` (the 0.5.4 one-shot caveat used it; nothing sets it since ATO-193)
 };
 const TK_FILTER_ORDER = ['all','pending','running','completed','failed','blocked','cancelled','recurring'];
@@ -23161,6 +23161,7 @@ function tkRow(t) {
   return {
     id:t.id, status:t.status || 'pending', origin:t.origin || '—', triggerSource:t.triggerSource || null,
     sessionId:t.sessionId || null,
+    fullMessage:String(t.userMessage || ''), schedule:t.schedule || null,
     userMessage: collapsed.length <= 96 ? collapsed : collapsed.slice(0, 95) + '…',
     scheduleKind: t.schedule ? t.schedule.kind : null, scheduleLabel: formatScheduleLabel(t.schedule || null),
     recurring: !!t.recurring, scheduledFor: typeof t.scheduledFor === 'number' ? t.scheduledFor : null,
@@ -23174,7 +23175,7 @@ function tkVisibleRows() {
   return TK.rows.filter((row) => {
     if (TK.filter === 'recurring' ? !row.recurring : (TK.filter !== 'all' && row.status !== TK.filter)) return false;
     if (!needle) return true;
-    return row.userMessage.toLowerCase().includes(needle) || row.id.toLowerCase().includes(needle)
+    return (row.fullMessage || row.userMessage).toLowerCase().includes(needle) || row.id.toLowerCase().includes(needle)
       || (row.sessionId !== null && row.sessionId.toLowerCase().includes(needle));
   }).sort((a, b) => {
     const aDue = a.scheduledFor ?? Number.POSITIVE_INFINITY, bDue = b.scheduledFor ?? Number.POSITIVE_INFINITY;
@@ -23207,13 +23208,16 @@ function tkTyping() {
 }
 async function tasksRefresh(quiet) {
   if (!BR || TK.loading) return;
+  const gen = AGENT_GEN;
   TK.loading = true; TK.err = null;
   if (!quiet) tkRenderKeepCaret();
   const before = JSON.stringify([TK.rows, TK.err]);
   const res = await BR.tasks();
   TK.loading = false;
+  if (gen !== AGENT_GEN) return;
   if (res && res.ok && res.data && Array.isArray(res.data.tasks)) {
     TK.rows = res.data.tasks.slice(0, 200).map(tkRow);
+    if (TK.stopping) for (const id of TK.stopping) { if (!TK.rows.some((r) => r.id === id && r.status === 'running')) TK.stopping.delete(id); }
     TK.lastRefreshedAt = Date.now();
     // The sidebar's Tasks list reads TASKS; keep it in step with what the tab shows.
     TASKS_ERR = null;
@@ -23323,6 +23327,14 @@ function tkCancelModal() {
       + '<button class="btn btn-df sm" data-act="tasks:cancelConfirm" title="y = confirm">Cancel task</button></div>'
     + '</div></div>';
 }
+function tkRemoveModal() {
+  if (!TK.remove) return '';
+  return '<div class="set-overlay"><div class="tk-modal tk-modal--warn set-modal" role="alertdialog" aria-label="Remove cancelled task">'
+    + '<div class="set-mhead"><span class="tk-ico tk-ico--amber">' + ic('alert') + '</span><h4>Remove cancelled task?</h4></div>'
+    + '<p>This removes the task from the list. Its chat history is kept.</p>'
+    + '<div class="acts"><button class="btn btn-s sm" data-act="tasks:removeKeep">Keep task</button>'
+    + '<button class="btn btn-df sm" data-act="tasks:removeConfirm"' + (TK.action ? ' disabled' : '') + '>Remove task</button></div></div></div>';
+}
 function tkListHTML() {
   const rows = tkVisibleRows();
   const now = Date.now();
@@ -23364,10 +23376,9 @@ function tkListHTML() {
       + '</tbody></table></div>';
   }
   // Calm (S5): no key-hint row; run now and cancel are on the task's own page, the rest in the toolbar.
-  return '<div class="set-pane set-tasks">' + tkFilterBar(rows.length) + tkMessages() + body + tkCancelModal() + '</div>';
+  return '<div class="set-pane set-tasks">' + tkFilterBar(rows.length) + tkMessages() + body + tkCancelModal() + tkRemoveModal() + '</div>';
 }
-/* ST-02: everything the agent exposes about one task, the last error in
-   full, and its three actions. */
+/* The task's state, full message, last error and actions for its current status. */
 function tkDetailHTML() {
   const row = TK.rows.find((r) => r.id === TK.detailId);
   const back = '<button class="btn btn-g sm" data-act="tasks:back" title="Esc back">' + ic('chevL') + 'All tasks</button>';
@@ -23389,23 +23400,24 @@ function tkDetailHTML() {
   ];
   return '<div class="set-pane set-taskdetail">' + tkMessages()
     + '<div class="tk-bar">' + back + '<span class="grow"></span>'
-      + '<button class="btn btn-s sm" data-act="tasks:open:' + esc(id) + '" title="o open session">' + ic('chat') + 'Open session</button>'
-      + '<button class="btn btn-s sm" data-act="tasks:run:' + esc(id) + '" title="R run-now">' + ic('play') + 'Run now</button>'
-      + '<button class="btn btn-danger sm" data-act="tasks:cancel:' + esc(id) + '" title="c cancel">Cancel task</button></div>'
+      + taskManagementActionsHTML(Object.assign({}, row, {stopping:!!(TK.stopping && TK.stopping.has(id))}), !!TK.action, {esc, ic}) + '</div>'
+    + (row.status === 'running' ? '<p class="set-cap">' + (TK.stopping && TK.stopping.has(id) ? 'Stopping this run. ' : '')
+      + (row.recurring ? 'Stop run keeps the next scheduled run. Cancel task stops the schedule.' : 'Stop run cancels this one-time task.') + '</p>' : '')
     + '<div class="set-wellcard">'
-      + '<h3 class="set-dtitle">' + esc(row.userMessage || id) + '</h3>'
+      + '<h3 class="set-dtitle">' + esc(row.fullMessage || row.userMessage || id) + '</h3>'
       + '<div class="set-chips">' + tkStatusChip(row.status) + (row.recurring ? '<span class="tk-chip tk-chip--sm">recurring</span>' : '')
         + '<span class="mono set-meta">attempts ' + row.attempts + '/' + row.maxAttempts + '</span></div>'
       + '<dl class="tk-plate set-plate">' + plate.filter(Boolean).map(([k, v]) => '<dt>' + esc(k) + '</dt><dd>' + esc(v) + '</dd>').join('') + '</dl>'
     + '</div>'
-    + (row.lastError ? '<div class="tuierr tk-notice tk-notice--red set-lasterr">' + ic('alert') + '<span class="grow"><b>' + (/^interrupted:/.test(row.lastError) ? 'Last run stopped:' : 'Last run failed:') + '</b> <span class="mono">' + esc(row.lastError) + '</span></span></div>' : '')
+    + (row.lastError ? '<div class="tuierr tk-notice tk-notice--red set-lasterr">' + ic('alert') + '<span class="grow"><b>' + (/^(interrupted:|stopped:)/.test(row.lastError) ? 'Last run stopped:' : 'Last run failed:') + '</b> <span class="mono">' + esc(row.lastError) + '</span></span></div>' : '')
     // No Recent firings section: the TUI builds that feed in-process by diffing records between ticks, and the HTTP API has no such surface yet.
-    + tkCancelModal()
+    + tkCancelModal() + tkRemoveModal()
     + '</div>';
 }
 function tkNewForm() {
   // ATO-519: `manual` false is the plain-words step (`ask`); true is the cron / interval / at form.
   return {manual:false, ask:'', kind:'cron', cronExpression:'', intervalSeconds:'', atIsoOrMs:'', tz:'', message:'',
+          editId:null, revision:0, previewRequest:0,
           notify:false, telegramPaired:false, telegramLoaded:false, telegramLoading:false,
           preview:{ok:false, error:null, nextFirings:[]}, submitting:false, error:null, timer:null};
 }
@@ -23432,7 +23444,7 @@ async function tkLoadTelegram(f) {
   if (gen !== AGENT_GEN) { f.telegramLoading = false; f.telegramLoaded = false; return; }
   f.telegramPaired = taskTelegramPaired(config);
   f.telegramLoaded = true; f.telegramLoading = false;
-  if (!f.telegramPaired) f.notify = false;
+  if (!f.telegramPaired && !f.editId) f.notify = false;
   if (tasksVisible() && TK.mode === 'create') tkRenderKeepCaret();
 }
 function tkNotifyHTML(f) {
@@ -23440,9 +23452,10 @@ function tkNotifyHTML(f) {
   const loading = !f.telegramLoaded;
   const help = loading ? 'Checking Telegram setup…'
     : f.telegramPaired ? 'Each run also sends its final result to your paired Telegram account.'
+    : f.editId && f.notify ? 'The existing Telegram report choice is kept. Set up Telegram to restore delivery.'
     : 'Pair and enable Telegram in Settings to receive task reports there.';
   return '<div class="tk-card"><div class="tk-setrow"><div class="body"><div class="t">Send reports to Telegram</div><div class="d">' + esc(help) + '</div></div>'
-    + setSwitchHTML({on:f.notify && f.telegramPaired, label:'Send reports to Telegram', act:'tasks:notify', disabled:loading || !f.telegramPaired, busy:loading, title:'Send each run\'s final result to Telegram'})
+    + setSwitchHTML({on:!!f.notify, label:'Send reports to Telegram', act:'tasks:notify', disabled:f.submitting || loading || (!f.telegramPaired && !f.notify), busy:loading, title:'Send each run\'s final result to Telegram'})
     + '</div>' + (!loading && !f.telegramPaired ? '<div class="tk-setrow"><button class="btn btn-s sm" data-act="tasks:telegram">Set up Telegram</button></div>' : '') + '</div>';
 }
 /* ST-03: kind as a segmented control, labelled fields, the next five
@@ -23452,21 +23465,24 @@ function tkFormHTML() {
   if (!f.manual) return tkAskHTML(f);
   const field = (l, name, value, placeholder, help, mono) =>
     '<label class="tk-field tkrow"><span class="tk-lbl">' + esc(l) + '</span>'
-    + '<input class="tk-inp' + (mono ? ' mono' : '') + '" data-tk-field="' + name + '" value="' + esc(value) + '" placeholder="' + esc(placeholder) + '" autocomplete="off" spellcheck="false">'
+    + (name === 'message' ? '<textarea class="tk-inp" rows="4" data-tk-field="message" placeholder="' + esc(placeholder) + '"' + (f.submitting ? ' disabled' : '') + '>' + esc(value) + '</textarea>'
+      : '<input class="tk-inp' + (mono ? ' mono' : '') + '" data-tk-field="' + name + '" value="' + esc(value) + '" placeholder="' + esc(placeholder) + '" autocomplete="off" spellcheck="false"' + (f.submitting ? ' disabled' : '') + '>')
     + (help ? '<span class="tk-help">' + esc(help) + '</span>' : '') + '</label>';
   const expr = f.kind === 'cron' ? field('Cron', 'cronExpression', f.cronExpression, '0 * * * *', 'standard 5-field cron', true)
     : f.kind === 'interval' ? field('Every (seconds)', 'intervalSeconds', f.intervalSeconds, '300', '', true)
+    : f.kind === 'immediate' ? '<p class="set-cap">This task runs when the queue picks it up.</p>'
     : field('At', 'atIsoOrMs', f.atIsoOrMs, '2026-05-01T09:00:00Z', 'an ISO time or Unix-ms', true);
   const canSubmit = f.preview.ok && !f.submitting;
   return '<div class="set-pane set-form">'
-    + '<div class="tk-bar"><button class="btn btn-g sm" data-act="tasks:back" title="Esc cancel">' + ic('chevL') + 'All tasks</button></div>'
+    + '<div class="tk-bar"><button class="btn btn-g sm" data-act="tasks:back" title="Esc cancel">' + ic('chevL') + (f.editId ? 'Task details' : 'All tasks') + '</button></div>'
+    + (f.editId ? '<h3 class="set-dtitle">Edit task</h3>' : '')
     + '<div class="set-formgrid">'
       + '<div class="set-formcol">'
         + '<div class="tk-field tkrow"><span class="tk-lbl">Kind</span><div class="tk-seg" role="group" aria-label="Kind">'
-          + ['cron','interval','at'].map((k) => '<button class="tkkind' + (f.kind === k ? ' on' : '') + '" data-act="tasks:kind:' + k + '" aria-pressed="' + (f.kind === k) + '">' + k + '</button>').join('')
+          + (f.editId ? ['cron','interval','at','immediate'] : ['cron','interval','at']).map((k) => '<button class="tkkind' + (f.kind === k ? ' on' : '') + '" data-act="tasks:kind:' + k + '" aria-pressed="' + (f.kind === k) + '"' + (f.submitting ? ' disabled' : '') + '>' + (k === 'immediate' ? 'once, when ready' : k) + '</button>').join('')
         + '</div></div>'
         // ATO-519: the way back to the plain-words step.
-        + '<p class="set-cap">Or <button class="set-linkbtn" data-act="tasks:plain">describe it in words</button> and the agent sets the schedule.</p>'
+        + (f.editId ? '' : '<p class="set-cap">Or <button class="set-linkbtn" data-act="tasks:plain">describe it in words</button> and the agent sets the schedule.</p>')
         + expr
         + (f.kind === 'cron' ? field('Time zone', 'tz', f.tz, 'optional, e.g. Europe/Berlin', '', true) : '')
         // ATO-522: every run replies in the task's own session (task-runner.ts), reached from the detail view's Open session.
@@ -23480,7 +23496,7 @@ function tkFormHTML() {
       + '<span class="grow"></span>'
       + '<button class="btn btn-g" data-act="tasks:back">Cancel</button>'
       + '<button class="btn btn-p set-submit" data-act="tasks:submit"' + (canSubmit ? '' : ' disabled') + ' title="Ctrl+Enter submit">'
-        + (f.submitting ? '<span class="tk-spin on-fill"></span>' : '') + 'Create task</button>'
+        + (f.submitting ? '<span class="tk-spin on-fill"></span>' : '') + (f.editId ? 'Save changes' : 'Create task') + '</button>'
     + '</div>'
     + '</div>';
 }
@@ -23527,6 +23543,7 @@ function tkAsk() {
   return {ok:true, text};
 }
 function tkPreviewHTML(f) {
+  if (f.editId && f.kind === 'immediate') return '<div class="set-prevh"><b>No scheduled time</b></div><p class="set-cap">The task stays in the queue and runs when ready.</p>';
   const head = '<div class="set-prevh"><b>Next runs</b></div>';
   if (f.error) return '<div class="set-prevh"><b>Next runs</b></div><div class="tuierr tk-help tk-help--err">error: ' + esc(f.error) + '</div>';
   if (f.preview.error) return '<div class="set-prevh"><b>Next runs</b></div><div class="tuierr tk-help tk-help--err">error: ' + esc(f.preview.error) + '</div>';
@@ -23538,6 +23555,9 @@ function tkPreviewHTML(f) {
 }
 function tkFieldInput(name, value) {
   const f = TK.form || (TK.form = tkNewForm());
+  if (f.submitting) return;
+  f.revision = (f.revision || 0) + 1;
+  f.preview = {ok:false, error:null, nextFirings:[]};
   f[name] = value; f.error = null;
   // ATO-519: the plain-words field has no schedule to preview; only Ask the agent follows what is typed.
   if (name === 'ask') { const b = document.querySelector('[data-act="tasks:ask"]'); if (b) b.disabled = !taskAskMessage(value); return; }
@@ -23547,8 +23567,11 @@ function tkFieldInput(name, value) {
 /* The preview is the agent's own validator + cron-parser, run in the main process. */
 async function tkPreview() {
   const f = TK.form; if (!f || !BR) return null;
-  const res = await BR.taskPreview({kind:f.kind, cronExpression:f.cronExpression, intervalSeconds:f.intervalSeconds, atIsoOrMs:f.atIsoOrMs, tz:f.tz, message:f.message});
-  if (TK.form !== f) return null;
+  const gen = AGENT_GEN, revision = f.revision || 0, request = f.previewRequest = (f.previewRequest || 0) + 1;
+  let res;
+  try { res = await BR.taskPreview({kind:f.kind, cronExpression:f.cronExpression, intervalSeconds:f.intervalSeconds, atIsoOrMs:f.atIsoOrMs, tz:f.tz, message:f.message}); }
+  catch (e) { res = {ok:false, error:'Could not validate the task. Check the agent connection and try again.'}; }
+  if (TK.form !== f || gen !== AGENT_GEN || revision !== (f.revision || 0) || request !== f.previewRequest) return null;
   if (!res || res.ok === false) { f.preview = {ok:false, error:(res && res.error) || 'preview failed', nextFirings:[]}; }
   else f.preview = res.preview;
   const box = document.getElementById('tk-preview');
@@ -23561,15 +23584,31 @@ async function tkPreview() {
 async function tkSubmit() {
   const f = TK.form; if (!f || !BR || f.submitting) return {ok:false, error:'no form'};
   if (!f.manual) return tkAsk();   // ATO-519: Ctrl+Enter on the plain-words step sends it to the agent
-  f.error = null;
+  const gen = AGENT_GEN;
+  f.error = null; f.submitting = true; clearTimeout(f.timer); render();
   const v = await tkPreview();
-  if (!v || v.ok === false || !v.schedule) return {ok:false, error:(f.preview && f.preview.error) || 'invalid'};
-  f.submitting = true; render();
+  if (TK.form !== f || gen !== AGENT_GEN) { f.submitting = false; return {ok:false, error:'form changed'}; }
+  if (!v || v.ok === false || (v.preview && !v.preview.ok) || (!v.schedule && !(f.editId && f.kind === 'immediate'))) {
+    f.submitting = false; render(); return {ok:false, error:(f.preview && f.preview.error) || 'invalid'};
+  }
   const sc = v.schedule;
-  const expression = sc.kind === 'cron' ? sc.expression : sc.kind === 'interval' ? String(sc.everyMs / 1000) : String(sc.at);
-  const res = await BR.taskCreate({message:v.message, kind:sc.kind, expression, tz:sc.kind === 'cron' ? (sc.tz || '') : '', ...(f.notify && f.telegramPaired ? {notify:'telegram'} : {})});
+  let res;
+  try {
+    if (f.editId) {
+      res = BR.updateTask ? await BR.updateTask(f.editId, {userMessage:v.message, schedule:sc, notify:f.notify ? 'telegram' : null})
+        : {ok:false, error:'Update the desktop app and agent to edit tasks.'};
+    } else {
+      const expression = sc.kind === 'cron' ? sc.expression : sc.kind === 'interval' ? String(sc.everyMs / 1000) : String(sc.at);
+      res = await BR.taskCreate({message:v.message, kind:sc.kind, expression, tz:sc.kind === 'cron' ? (sc.tz || '') : '', ...(f.notify && f.telegramPaired ? {notify:'telegram'} : {})});
+    }
+  } catch (e) { res = {ok:false, error:'Could not save the task. Check the agent connection and try again.'}; }
   f.submitting = false;
-  if (!res || !res.ok) { f.error = (res && res.error) || 'task create failed'; render(); return {ok:false, error:f.error}; }
+  if (TK.form !== f || gen !== AGENT_GEN) return {ok:false, error:'form changed'};
+  if (!res || !res.ok) { const error = (res && res.error) || 'Could not save the task.'; f.error = /^No route for /.test(error) ? 'Update Atomic Agent to edit tasks from the desktop app.' : error; render(); return {ok:false, error:f.error}; }
+  if (f.editId) {
+    TK.msg = 'Task updated.'; TK.note = null; TK.detailId = f.editId; TK.mode = 'detail'; TK.form = null;
+    await tasksRefresh(); return {ok:true, id:f.editId};
+  }
   TK.msg = 'task ' + res.id + ' scheduled (' + sc.kind + ')';
   // The TUI's success line stays verbatim (ATO-193: a one-shot no longer carries the 0.5.4 caveat).
   TK.note = null;
@@ -23577,6 +23616,43 @@ async function tkSubmit() {
   TK.mode = 'list'; TK.form = null;
   await tasksRefresh();
   return {ok:true, id:res.id};
+}
+function tkEdit(id) {
+  const row = TK.rows.find((r) => r.id === id);
+  if (!row || row.status !== 'pending' || TK.action) return;
+  TK.form = Object.assign(tkNewForm(), taskEditFormFields(row));
+  TK.mode = 'create'; TK.msg = null; TK.err = null;
+  render(); tkPreview();
+}
+
+/* Stop requests keep recurring schedules; removing a record requires cancelled status. */
+async function tkManage(kind, id) {
+  if (!BR || TK.action) return;
+  if (kind === 'stop' && TK.stopping && TK.stopping.has(id)) return;
+  const row = TK.rows.find((r) => r.id === id);
+  if (!row || (kind === 'stop' ? row.status !== 'running' : row.status !== 'cancelled')) return;
+  const method = kind === 'stop' ? 'stopTask' : 'removeTask';
+  if (!BR[method]) { TK.err = 'Update the desktop app and agent to manage tasks.'; render(); return; }
+  const own = {kind, id}, gen = AGENT_GEN;
+  TK.action = own; TK.err = null; TK.msg = kind === 'stop' ? 'Stopping this run…' : 'Removing the cancelled task…'; render();
+  let res;
+  try { res = await BR[method](id); }
+  catch (e) { res = {ok:false, error:'Could not reach the agent. Try again.'}; }
+  if (TK.action !== own) return;
+  TK.action = null;
+  if (gen !== AGENT_GEN) return;
+  TK.remove = null;
+  if (!res || !res.ok) { TK.msg = null; const error = (res && res.error) || 'The task could not be changed.'; TK.err = /^No route for /.test(error) ? 'Update Atomic Agent to manage tasks from the desktop app.' : error; }
+  else if (kind === 'remove') {
+    TK.msg = 'Cancelled task removed. Its chat history is kept.';
+    if (TK.detailId === id) { TK.mode = 'list'; TK.detailId = null; }
+  } else {
+    const stopping = res.data && res.data.stopping;
+    if (stopping) { if (!TK.stopping) TK.stopping = new Set(); TK.stopping.add(id); }
+    TK.msg = stopping ? 'Stop requested. Waiting for the current work to finish stopping.'
+      : row.recurring ? 'Run stopped. The next scheduled run is kept.' : 'Task stopped and cancelled.';
+  }
+  await tasksRefresh();
 }
 /* Cancel: DELETE /api/tasks/{id}; the lines are the TUI orchestrator's. */
 async function tkCancel(id) {
@@ -23617,16 +23693,21 @@ function tasksAct(what) {
   const arg = rest.join(':');
   const sel = () => arg || (TK.mode === 'detail' ? TK.detailId : (tkSelected() || {}).id);
   if (verb === 'new') { if (!S.settings && S.room !== 'tasks') { S.settings = 1; S.settingsPane = 'tasks'; } TK.mode = 'create'; TK.form = tkNewForm(); TK.msg = null; render(); return; }
-  if (verb === 'notify') { const f = TK.form; if (f && f.telegramPaired) { f.notify = !f.notify; tkRepaintKeepFocus(); } return; }
+  if (verb === 'notify') { const f = TK.form; if (f && !f.submitting && (f.telegramPaired || f.notify)) { f.notify = !f.notify; tkRepaintKeepFocus(); } return; }
   if (verb === 'telegram') { if (TK.form) TK.form.telegramLoaded = false; act('settings:telegram'); return; }
   // ATO-519: the plain-words step and the manual form, both ways, and an example into the field.
-  if (verb === 'manual' || verb === 'plain') { const f = TK.form || (TK.form = tkNewForm()); f.manual = verb === 'manual'; f.error = null; render(); return; }
+  if (verb === 'manual' || verb === 'plain') { const f = TK.form || (TK.form = tkNewForm()); if (f.editId || f.submitting) return; f.manual = verb === 'manual'; f.error = null; render(); return; }
   if (verb === 'example') { const f = TK.form || (TK.form = tkNewForm()); const ex = TASK_ASK_EXAMPLES[Number(arg)]; if (ex) f.ask = ex; render(); const n = document.querySelector('[data-tk-field="ask"]'); if (n) { n.focus(); n.setSelectionRange(n.value.length, n.value.length); } return; }
   if (verb === 'ask') { tkAsk(); return; }
-  if (verb === 'kind') { const f = TK.form || (TK.form = tkNewForm()); f.kind = arg; f.error = null; render(); tkPreview(); return; }
+  if (verb === 'kind') { const f = TK.form || (TK.form = tkNewForm()); if (f.submitting) return; f.kind = arg; f.revision = (f.revision || 0) + 1; f.preview = {ok:false, error:null, nextFirings:[]}; f.error = null; render(); tkPreview(); return; }
   if (verb === 'submit') { tkSubmit(); return; }
-  if (verb === 'back') { TK.mode = 'list'; TK.form = null; TK.cancel = null; render(); return; }
-  if (verb === 'detail') { TK.detailId = arg; const rows = tkVisibleRows(); const i = rows.findIndex((r) => r.id === arg); if (i >= 0) TK.cursor = i; TK.mode = 'detail'; render(); return; }
+  if (verb === 'back') { const edited = TK.form && TK.form.editId; if (TK.form) clearTimeout(TK.form.timer); TK.mode = edited ? 'detail' : 'list'; if (edited) TK.detailId = edited; TK.form = null; TK.cancel = null; TK.remove = null; render(); return; }
+  if (verb === 'edit') { tkEdit(sel()); return; }
+  if (verb === 'stop') { tkManage('stop', sel()); return; }
+  if (verb === 'remove') { const id = sel(); const row = TK.rows.find((r) => r.id === id); if (!TK.action && row && row.status === 'cancelled') { TK.remove = id; render(); } return; }
+  if (verb === 'removeConfirm') { if (TK.remove) tkManage('remove', TK.remove); return; }
+  if (verb === 'removeKeep') { TK.remove = null; render(); return; }
+  if (verb === 'detail') { if (TK.detailId !== arg) { TK.msg = null; TK.err = null; TK.note = null; } TK.detailId = arg; const rows = tkVisibleRows(); const i = rows.findIndex((r) => r.id === arg); if (i >= 0) TK.cursor = i; TK.mode = 'detail'; render(); return; }
   if (verb === 'open') {
     const row = TK.rows.find((r) => r.id === sel());
     if (!row) { TK.msg = 'task ' + sel() + ' not found'; render(); return; }
@@ -23636,12 +23717,13 @@ function tasksAct(what) {
   if (verb === 'cancel') {
     const id = sel(); if (!id) return;
     const row = TK.rows.find((r) => r.id === id);
+    if (TK.action || !row || (row.status !== 'pending' && row.status !== 'running')) return;
     if (row && row.recurring) { TK.cancel = {taskId:id, isRecurring:true}; render(); return; }
     tkCancel(id); return;
   }
   if (verb === 'cancelConfirm') { if (TK.cancel) tkCancel(TK.cancel.taskId); return; }
   if (verb === 'cancelKeep') { TK.cancel = null; render(); return; }
-  if (verb === 'run') { const id = sel(); if (id) tkRunNow(id); return; }
+  if (verb === 'run') { const id = sel(); const row = TK.rows.find((r) => r.id === id); if (!TK.action && row && row.status === 'pending') tkRunNow(id); return; }
   if (verb === 'refresh') { tasksRefresh(); return; }
   if (verb === 'page') { const n = tkVisibleRows().length; TK.cursor = Math.max(0, Math.min(TK.cursor + (arg === 'up' ? -TK_MAX_ROWS : TK_MAX_ROWS), n - 1)); render(); return; }
   if (verb === 'auto') { TK.auto = !TK.auto; render(); return; }
@@ -23656,8 +23738,9 @@ function tasksAct(what) {
 function tasksKey(e, k, inText) {
   const tkField = inText && e.target.dataset && e.target.dataset.tkField;
   if (k === 'Escape') {
+    if (TK.remove) { e.preventDefault(); TK.remove = null; render(); return true; }
     if (TK.cancel) { e.preventDefault(); TK.cancel = null; render(); return true; }
-    if (TK.mode !== 'list') { e.preventDefault(); TK.mode = 'list'; TK.form = null; render(); return true; }
+    if (TK.mode !== 'list') { e.preventDefault(); tasksAct('back'); return true; }
     if (TK.searchOpen || TK.search) { e.preventDefault(); TK.searchOpen = false; TK.search = ''; render(); return true; }
     return false;
   }
@@ -23666,12 +23749,20 @@ function tasksKey(e, k, inText) {
   if (e.target.id === 'tk-search' && k === 'Enter') { e.preventDefault(); TK.searchOpen = false; render(); return true; }
   if (inText) return false;
   if (e.metaKey || e.ctrlKey || e.altKey) return false;
+  if (TK.remove) {
+    if (k === 'y') { e.preventDefault(); tasksAct('removeConfirm'); return true; }
+    if (k === 'n') { e.preventDefault(); tasksAct('removeKeep'); return true; }
+    return true;
+  }
   if (TK.cancel) {
     if (k === 'y') { e.preventDefault(); tkCancel(TK.cancel.taskId); return true; }
     if (k === 'n') { e.preventDefault(); TK.cancel = null; render(); return true; }
     return true;
   }
   if (TK.mode === 'detail') {
+    if (k === 'e') { e.preventDefault(); tasksAct('edit'); return true; }
+    if (k === 's') { e.preventDefault(); tasksAct('stop'); return true; }
+    if (k === 'Delete') { e.preventDefault(); tasksAct('remove'); return true; }
     if (k === 'o') { e.preventDefault(); tasksAct('open'); return true; }
     if (k === 'R') { e.preventDefault(); tasksAct('run'); return true; }
     if (k === 'c') { e.preventDefault(); tasksAct('cancel'); return true; }

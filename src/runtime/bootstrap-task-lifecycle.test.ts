@@ -246,6 +246,47 @@ describe("a scheduled task's run across a stop and a start", () => {
     }
   });
 
+  it.each([false, true])("stops only the owned firing through runtime.runTurn (recurring=%s)", async (recurring) => {
+    process.env.ATOMIC_AGENT_TASKS_SCHEDULER_ENABLED = "false";
+    process.env.ATOMIC_AGENT_TASKS_RUN_ON_CREATE = "false";
+    resetConfigCache();
+    const model = silentModel();
+    const runtime = await boot(model.llamaComplete);
+    try {
+      const session = runtime.createSession();
+      model.state.target = session.id;
+      const task = runtime.taskRunner.create({
+        sessionId: session.id,
+        userMessage: "stop this firing",
+        origin: "http",
+        maxAttempts: 3,
+        ...(recurring ? {
+          schedule: { kind: "interval" as const, everyMs: 300_000 },
+          scheduledFor: Date.now() - 1,
+        } : {}),
+      });
+      const running = runtime.taskRunner.runOne(task.id);
+      expect(await waitFor(() => model.state.entered === 1)).toBe(true);
+      expect(await runtime.taskRunner.stopTask(task.id)).toMatchObject({
+        stopping: false,
+        task: { status: recurring ? "pending" : "cancelled", sessionId: session.id },
+      });
+      await running;
+      expect(runtime.sessionStore.load(session.id)?.status).toBe("cancelled");
+      expect(runtime.turnController.busySessionIds()).not.toContain(session.id);
+      if (recurring) {
+        expect(runtime.taskStore.get(task.id)?.scheduledFor).toBeGreaterThan(Date.now());
+      } else {
+        expect(runtime.taskRunner.removeCancelled(task.id)?.id).toBe(task.id);
+      }
+      // Stopping one task leaves the runner available for the next task.
+      const other = runtime.taskRunner.create({ userMessage: "continue", origin: "http", maxAttempts: 1 });
+      expect((await runtime.taskRunner.runOne(other.id))?.status).toBe("completed");
+    } finally {
+      await runtime.shutdown();
+    }
+  });
+
   it("takes back, at boot, a task whose agent is gone however recently it started, and leaves a live agent's", async () => {
     process.env.ATOMIC_AGENT_TASKS_SCHEDULER_ENABLED = "false";
     resetConfigCache();

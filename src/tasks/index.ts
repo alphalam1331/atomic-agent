@@ -8,6 +8,7 @@ export type {
   TaskFailureInput,
   TaskListOptions,
   TaskStoreOptions,
+  TaskUpdateInput,
 } from "./task-store.js";
 export { TaskRunner } from "./task-runner.js";
 export { planTaskResume, resumeNote, wasInterruptedFromOutside } from "./task-resume.js";
@@ -19,6 +20,7 @@ export type {
   TaskRunnerRuntime,
   TaskRunnerSessionLoader,
   TaskRunnerSessionFactory,
+  TaskStopOutcome,
 } from "./task-runner.js";
 export type {
   TaskReport,
@@ -61,6 +63,7 @@ export {
   TASK_NOTIFY_TARGETS,
   TASK_USER_MESSAGE_MAX_LENGTH,
   TaskStateError,
+  TaskOperationError,
   TaskValidationError,
 } from "./task-types.js";
 export type {

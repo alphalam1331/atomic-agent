@@ -2694,6 +2694,22 @@ function wireIpc(client: AgentClient): void {
     const clean = taskId(id);
     return clean ? wrap(() => client.cancelTask(clean)).then((res) => (A.taskAction("cancel", res), res)) : { ok: false, error: "task id required" };
   });
+  ipcMain.handle("agent:updateTask", (_event, id: unknown, patch: unknown) => {
+    const clean = taskId(id);
+    if (!clean) return { ok: false, error: "task id required" };
+    if (!patch || typeof patch !== "object" || Array.isArray(patch)) {
+      return { ok: false, error: "task update must be an object" };
+    }
+    return wrap(() => client.updateTask(clean, patch as Record<string, unknown>));
+  });
+  ipcMain.handle("agent:stopTask", (_event, id: unknown) => {
+    const clean = taskId(id);
+    return clean ? wrap(() => client.stopTask(clean)) : { ok: false, error: "task id required" };
+  });
+  ipcMain.handle("agent:removeTask", (_event, id: unknown) => {
+    const clean = taskId(id);
+    return clean ? wrap(() => client.removeTask(clean)) : { ok: false, error: "task id required" };
+  });
   ipcMain.handle("agent:runTask", (_event, id: unknown) => {
     const clean = taskId(id);
     return clean ? wrap(() => client.runTask(clean)).then((res) => (A.taskAction("run", res), res)) : { ok: false, error: "task id required" };
@@ -2798,7 +2814,7 @@ function wireIpc(client: AgentClient): void {
     const { form, now } = (payload ?? {}) as { form?: Record<string, unknown>; now?: unknown };
     const str = (v: unknown) => (typeof v === "string" ? v : "");
     const kindRaw = str(form?.kind);
-    const kind = kindRaw === "interval" || kindRaw === "at" ? kindRaw : "cron";
+    const kind = kindRaw === "interval" || kindRaw === "at" || kindRaw === "immediate" ? kindRaw : "cron";
     const input: TaskCreateFormInput = {
       kind,
       cronExpression: str(form?.cronExpression),
