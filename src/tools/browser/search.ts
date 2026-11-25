@@ -21,7 +21,7 @@ export function buildBrowserSearchTool(
   return {
     name: "browser.search",
     description:
-      "Run a web search in the live browser: opens the engine's results page and refreshes the world snapshot. Engine defaults to google. Use only when the user explicitly asks to search via the browser, or when you then need to click/scroll/read the live results page.",
+      "Search the web in the controlled browser: opens the engine's results page and refreshes the world snapshot. Default for web search when browser tools are available for this role. Engine defaults to google.",
     readonly: false,
     async run(rawArgs, ctx) {
       const query = rawArgs.query;

@@ -72,6 +72,7 @@ import { createSetSessionWorkingDirHandler } from "./session-working-dir.js";
 import { createReconnectMemoryEmbeddingsHandler } from "./route-memory-embeddings.js";
 import { createTelegramChannelHandler } from "./route-telegram-channel.js";
 import { createTelegramTestNotificationHandler } from "./route-telegram-test-notification.js";
+import { createEmailHandlers } from "./route-email.js";
 
 /**
  * Build the full atomic-agent HTTP route table. All handlers are
@@ -88,6 +89,7 @@ export function buildRouteTable(): RouteDefinition[] {
   // Same reason: the last pairing window's outcome is per-process state
   // the GET reads back after the POST opened it.
   const telegramPairing = createTelegramPairingHandlers();
+  const email = createEmailHandlers();
   return [
     {
       method: "GET",
@@ -124,6 +126,10 @@ export function buildRouteTable(): RouteDefinition[] {
     { method: "POST", path: "/api/sessions/{id}/compact", handler: createSessionCompactionHandler(true) },
     { method: "GET", path: "/api/sessions/{id}/compaction", handler: createSessionCompactionHandler(false) },
     { method: "GET", path: "/api/config", handler: createGetConfigHandler() },
+    { method: "GET", path: "/api/email", handler: email.get },
+    { method: "PUT", path: "/api/email", handler: email.put },
+    { method: "DELETE", path: "/api/email", handler: email.remove },
+    { method: "POST", path: "/api/email/check", handler: email.check },
     {
       method: "PATCH",
       path: "/api/config",

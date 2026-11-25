@@ -166,6 +166,13 @@ start two task schedulers against the same cron jobs.
 
 ## Process model
 
+The [embedded browser](docs/embedded-browser.md) opens beside chat with tabs,
+navigation controls and manual takeover/resume. Its websites use separate
+sandboxed `WebContentsView`s and a persistent agent-owned profile. Existing
+`browser.*` tools reach only those views through an authenticated loopback bridge;
+the shell renderer is never an agent browser target. CLI/TUI and explicitly
+selected external browsers keep their existing backend.
+
 - `contextIsolation: true`, `sandbox: true`, `nodeIntegration: false`.
 - The renderer gets exactly one global, `window.atomic`, built in
   `preload/preload.ts`. No `ipcRenderer`, no `require`.
@@ -824,7 +831,21 @@ Honestly degraded, and labelled as such in the UI:
   The authenticated `POST /api/telegram/test-notification` sends a fixed message,
   accepts no recipient, and never queues a test for later. Older agents show an
   update hint. The Connected indicator uses live channel status when available.
-- **Composio** (Settings › Connections, beside MCP servers and Telegram; the
+- **Email** (Settings › Connections) connects an account the operator supplies,
+  using independent IMAP and SMTP hosts, ports, TLS or required STARTTLS,
+  usernames and passwords/app passwords. There is no provider-specific preset:
+  use the server settings supplied by the mail provider. The enabled switch is
+  part of the form and applies on Save. Dedicated authenticated agent routes
+  (`GET` / `PUT` / `DELETE /api/email`, `POST /api/email/check`) validate and
+  persist the account, keep passwords out of status responses, and check both
+  authentications without sending a message. Check uses the saved settings.
+  A blank password on Save retains its saved credential. Password drafts are
+  kept only in memory while this pane is open, restored through DOM properties
+  after a repaint, and cleared after a successful Save or when leaving the pane.
+  Save and Remove offer a runtime restart, held while a reply is running; the
+  agent loads its email tools at startup. Remove asks once before deleting the
+  account and both credentials. Older agents show the failed read with Retry.
+- **Composio** (Settings › Connections, beside MCP servers, Telegram and Email; the
   palette's Composio row) is the TUI Integrations tab's Composio row
   (`src/integrations/composio-integration.ts`, its setup walkthrough and
   copy). Without a key it is one card: what Composio is (1,500+ apps, each

@@ -32,6 +32,8 @@ import { promisify } from "node:util";
 
 import { wireAgentAutoRestart } from "./agent-auto-restart-wire.js";
 import { AgentClient, APPROVAL_DECISIONS, probeRemoteAgent, type ProjectTrustAnswerBody } from "./agent-client.js";
+import { createDesktopBrowserService } from "./browser-electron.js";
+import type { DesktopBrowserService } from "./browser-service.js";
 import { wireAgentLiveIpc } from "./agent-live.js";
 import { wirePluginsIpc } from "./plugins-ipc.js";
 import { wireAttachmentIpc } from "./attachments-ipc.js";
@@ -355,6 +357,7 @@ let win: BrowserWindow | null = null;
 /** When the window last went on screen — the probe's line between a frame painted and a frame seen. */
 let windowShownAt: number | null = null;
 let agent: AgentClient | null = null;
+let browserPane: DesktopBrowserService | null = null;
 /* A download in the one single-flight slot (`pull`, `pullUpdate`): its child,
    which job it is, and its last progress frame. Backlog 18 (review S5): every
    "already running" refusal names it (downloadRunning). */
@@ -983,6 +986,15 @@ function createWindow(): BrowserWindow {
     }).catch(() => undefined);
   });
   wireWindowErrorReporting(window, () => recovered);
+  browserPane?.attachWindow(window);
+  const pauseBrowser = () => { void browserPane?.command({ action: "takeover" }).catch(() => undefined); };
+  window.on("hide", pauseBrowser);
+  window.on("minimize", pauseBrowser);
+  window.webContents.on("render-process-gone", pauseBrowser);
+  window.webContents.on("did-start-loading", () => {
+    browserPane?.bounds({ x: 0, y: 0, width: 0, height: 0, visible: false });
+  });
+  window.on("closed", () => browserPane?.attachWindow(null));
 
   // Renderer faults must never be silent: they surface in the app log
   // and, under --smoke, on stdout where CI can see them.
@@ -1253,6 +1265,22 @@ const UPDATE_CLOSE_MS = 4_000;
 const SWITCH_BUSY_CHECK_MS = 5_000;
 
 function wireIpc(client: AgentClient): void {
+  // Remote tabs have no preload. Even a subframe of the shell is not an IPC
+  // caller: only the current, local shell's main frame may control this pane.
+  const browserCaller = (event: Electron.IpcMainInvokeEvent): boolean =>
+    !!win && event.sender === win.webContents && event.senderFrame === win.webContents.mainFrame;
+  ipcMain.handle("browser:state", (event) => browserCaller(event) && browserPane
+    ? { ok: true, data: browserPane.state() } : { ok: false, error: "Browser unavailable." });
+  ipcMain.handle("browser:command", async (event, input: unknown) => {
+    if (!browserCaller(event) || !browserPane) return { ok: false, error: "Browser unavailable." };
+    try { return { ok: true, data: await browserPane.command(input) }; }
+    catch (error) { return { ok: false, error: error instanceof Error ? error.message : "Browser command failed." }; }
+  });
+  ipcMain.handle("browser:bounds", (event, input: unknown) => {
+    if (!browserCaller(event) || !browserPane) return { ok: false };
+    browserPane.bounds(input);
+    return { ok: true };
+  });
   // Analytics: chat_turn_ui, one per turn (analytics/chat-turns.ts).
   const chatTurns = new A.ChatTurnTracker((summary) => { A.turnEnded(); A.track("chat_turn_ui", { ...summary }); });
   /* B01 QA, ATO-198: the turns main is streaming, for a page that loads
@@ -1354,6 +1382,14 @@ function wireIpc(client: AgentClient): void {
   };
   resource("capabilities", () => client.capabilities());
   resource("config", () => client.config());
+  resource("emailStatus", () => client.emailStatus());
+  resource("emailCheck", () => client.emailCheck());
+  resource("emailRemove", () => client.emailRemove());
+  ipcMain.handle("agent:emailSave", async (_event, input: unknown) => {
+    if (!input || typeof input !== "object" || Array.isArray(input)) return { ok: false, error: "email settings required" };
+    try { return { ok: true, data: await client.emailSave(input as Record<string, unknown>) }; }
+    catch (err) { return { ok: false, error: err instanceof Error ? err.message : "Could not save the email settings." }; }
+  });
   resource("modelTiers", () => client.modelTiers());
   const skillSession = (value: unknown): string | null => {
     if (value == null || value === "") return null;
@@ -5913,15 +5949,15 @@ async function settingsTest(
   // The TUI's eight Manage tabs: the menu tree's `tab` nodes and their chords still open these panes.
   const TABS = ["tasks", "skills", "memory", "mcp", "llm", "telegram", "import", "privacy"];
   // Calm (S5): the window's own panes and nav sections, in nav order.
-  const PANES = ["general", "llm", "mcp", "telegram", "composio", "memory", "tasks", "skills", "plugins", "privacy", "import", "diagnostics"];
+  const PANES = ["general", "llm", "mcp", "telegram", "composio", "email", "memory", "tasks", "skills", "plugins", "privacy", "import", "diagnostics"];
   const LABELS = ["General", "Models", "Connections", "Memory", "Tasks", "Skills", "Plugins", "Privacy", "Import", "Diagnostics"];
-  const SECTION_OF: Record<string, string> = { general: "general", llm: "models", mcp: "connections", telegram: "connections", composio: "connections", memory: "memory",
+  const SECTION_OF: Record<string, string> = { general: "general", llm: "models", mcp: "connections", telegram: "connections", composio: "connections", email: "connections", memory: "memory",
     tasks: "tasks", skills: "skills", plugins: "plugins", privacy: "privacy", import: "import", diagnostics: "diagnostics" };
 
   const groups = await js<string[]>("window.__menuGroups()");
   check("settings: menu groups are the TUI's minus Go and Observe", same(groups, GROUPS), JSON.stringify(groups));
   const tabs = await js<string[]>("window.__settingsTabs()");
-  check("settings: the panes are General, Models, Connections (MCP, Telegram, Composio) … Diagnostics", same(tabs, PANES), JSON.stringify(tabs));
+  check("settings: the panes are General, Models, Connections (MCP, Telegram, Composio, Email) … Diagnostics", same(tabs, PANES), JSON.stringify(tabs));
 
   // Every node of the menu tree, verbatim label and ctrl+g chord, in registry
   // order (src/tui/menu/menu-registry.ts:107-675) — except that Go, Observe and
@@ -10461,7 +10497,9 @@ void app.whenReady().then(async () => {
     SMOKE ? null : readWorkspace(app.getPath("userData")),
     homedir(),
   );
-  agent = new AgentClient(workspace);
+  browserPane = createDesktopBrowserService({ profilePath: join(DESKTOP_STATE_DIR, "browser-electron"), onState: (state) => send("browser:state", state) });
+  const browserEnv = await browserPane.start();
+  agent = new AgentClient(workspace, { browserEnv });
   // ATO-1127: an agent on another computer, when one was saved (remote-agent.ts).
   if (!SMOKE && !FIRST_RUN_PROBE) agent.setRemote(readRemoteAgent(app.getPath("userData"), keyBox()));
   win = createWindow();
@@ -10691,7 +10729,9 @@ app.on("before-quit", (event) => {
     if (!quitShutdown.done) event.preventDefault();
     return;
   }
-  if (!agent) { event.preventDefault(); const s: { done: boolean } = { done: false }; quitShutdown = s; void analyticsClosed.finally(() => { s.done = true; app.quit(); }); return; }   // still the bounded last flush
+  const browserClosed = browserPane?.close().catch(() => undefined) ?? Promise.resolve();
+  const finalFlush = () => Promise.all([analyticsClosed, browserClosed]);
+  if (!agent) { event.preventDefault(); const s: { done: boolean } = { done: false }; quitShutdown = s; void finalFlush().finally(() => { s.done = true; app.quit(); }); return; }   // still the bounded last flush
   event.preventDefault();
   const client = agent;
   agent = null;
@@ -10709,7 +10749,7 @@ app.on("before-quit", (event) => {
   void runQuitShutdown({
     closeAgent: () => client.close(),
     stopModelServer: () => stopLocalDaemonOnQuit(quitConfig),
-    flush: () => analyticsClosed,
+    flush: finalFlush,
   }).then((outcome) => {
     if (outcome === "timed-out") console.error("[desktop] the quit's shutdown ran out of time — quitting without waiting further");
   }).finally(() => {

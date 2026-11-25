@@ -55,6 +55,9 @@ export {
   type NotificationsConfig, type AtomicMailConfig, type GitConfig, type ComposioConfig,
 } from "./integration-config.js";
 
+import { createEmailDefaults, parseEmailConfig, type EmailConfig } from "./email-config.js";
+export type { EmailConfig, EmailServerConfig, EmailSecurity } from "./email-config.js";
+
 import type {
   RuntimeLocalModelsConfig,
   UserLocalModelsConfig,
@@ -426,6 +429,8 @@ export interface AtomicAgentConfig {
   notifications: NotificationsConfig;
   /** The agent's own inbox. Mirrors `UserConfigFile.atomicMail`. */
   atomicMail: AtomicMailConfig;
+  /** Operator-configured IMAP/SMTP account. Passwords are stored separately. */
+  email: EmailConfig;
   /**
    * Git remote-sync policy. Mirrors `UserConfigFile.git`. The GitHub
    * token is not stored here — see `GitConfig`.
@@ -746,6 +751,8 @@ export interface UserConfigFile {
    * upgraded with every field `null`: no inbox, no owner, nothing sent.
    */
   atomicMail: AtomicMailConfig;
+  /** Optional operator-configured IMAP/SMTP account; disabled by default. */
+  email: EmailConfig;
   /**
    * Git remote-sync policy. Added in config v62. Older files are
    * transparently upgraded with `{ remoteSync: false }`, which keeps
@@ -1290,6 +1297,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
   swarm: createSwarmDefaults(),
   notifications: createNotificationsDefaults(),
   atomicMail: createAtomicMailDefaults(),
+  email: createEmailDefaults(),
   git: createGitDefaults(),
   composio: createComposioDefaults(),
   mcp: {
@@ -1663,6 +1671,7 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
       () => USER_CONFIG_DEFAULTS.notifications,
     ),
     atomicMail: parseAtomicMailConfig(atomicMail),
+    email: parseEmailConfig(obj.email, USER_CONFIG_DEFAULTS.email),
     git: parseGitConfig(git, () => USER_CONFIG_DEFAULTS.git),
     composio: parseComposioConfig(composio, () => USER_CONFIG_DEFAULTS.composio),
     mcp: {

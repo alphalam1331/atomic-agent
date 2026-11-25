@@ -2,7 +2,8 @@ import { posix, win32 } from "node:path";
 
 /**
  * The environment a vendor CLI is spawned with: the agent's own, minus
- * the variables that would move the CLI off the user's subscription.
+ * the variables that would move the CLI off the user's subscription and
+ * the desktop browser's private control capability.
  *
  * The agent's environment is not the user's shell. It carries the keys
  * of every other provider configured here — the `anthropic` provider's
@@ -21,8 +22,10 @@ export function cliChildEnv(
   strip: readonly string[] | undefined,
   base: NodeJS.ProcessEnv = process.env,
 ): NodeJS.ProcessEnv {
-  if (strip === undefined || strip.length === 0) return base;
-  const drop = new Set(strip.map((key) => key.toUpperCase()));
+  const drop = new Set((strip ?? []).map((key) => key.toUpperCase()));
+  drop.add("ATOMIC_AGENT_BROWSER_ENDPOINT");
+  drop.add("ATOMIC_AGENT_BROWSER_TOKEN");
+  if ((strip === undefined || strip.length === 0) && !Object.keys(base).some((key) => drop.has(key.toUpperCase()))) return base;
   const env: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(base)) {
     if (!drop.has(key.toUpperCase())) env[key] = value;

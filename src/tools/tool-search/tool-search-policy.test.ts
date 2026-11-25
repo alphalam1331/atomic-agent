@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ToolDescriptor } from "../../prompt/stable-prefix.js";
+import { DEFAULT_TOOL_DESCRIPTORS } from "../../prompt/tool-descriptors.js";
 import {
   applyToolSearch,
   CORE_TOOL_NAMES,
@@ -62,5 +63,24 @@ describe("applyToolSearch", () => {
       expect(CORE_TOOL_NAMES.has(name), name).toBe(true);
     }
     expect(CORE_TOOL_NAMES.has("os.git.commit")).toBe(false);
+  });
+
+  it("keeps browser search immediately callable with its complete schema in search mode", () => {
+    const browserSearch = DEFAULT_TOOL_DESCRIPTORS.find((descriptor) => descriptor.name === "browser.search");
+    expect(browserSearch).toBeDefined();
+    const effective = applyToolSearch(DEFAULT_TOOL_DESCRIPTORS, true);
+    const discovered = effective.find((descriptor) => descriptor.name === "browser.search");
+    expect(discovered).toBe(browserSearch);
+    expect(discovered?.tier ?? "frequent").toBe("frequent");
+    expect(discovered?.argsJsonSchema).toEqual(browserSearch?.argsJsonSchema);
+    expect(deferredToolNames(DEFAULT_TOOL_DESCRIPTORS, effective).has("browser.search")).toBe(false);
+  });
+
+  it("does not advertise browser search when the enabled catalog excludes it", () => {
+    const nonBrowser = DEFAULT_TOOL_DESCRIPTORS.filter((descriptor) => !descriptor.name.startsWith("browser."));
+    const effective = applyToolSearch(nonBrowser, true);
+    expect(effective.some((descriptor) => descriptor.name.startsWith("browser."))).toBe(false);
+    expect(effective.some((descriptor) => descriptor.name === "os.web.search")).toBe(true);
+    expect(effective.some((descriptor) => descriptor.name === "os.web.fetch")).toBe(true);
   });
 });

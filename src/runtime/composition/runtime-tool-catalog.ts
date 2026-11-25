@@ -43,11 +43,24 @@ import type { McpServerConfig } from "../../mcp/mcp-types.js";
 import { loadPluginMcpServers } from "../../plugins/plugin-mcp.js";
 import type { ToolDescriptor } from "../../prompt/stable-prefix.js";
 import { filterToolDescriptorsByConfig } from "../filter-disabled-tools.js";
-import { readAtomicMailApiKey } from "../../atomic-mail/index.js";
+import { AtomicMailService, readAtomicMailApiKey } from "../../atomic-mail/index.js";
+import { EmailService, EMAIL_IMAP_PASSWORD_ENV, EMAIL_SMTP_PASSWORD_ENV } from "../../email/index.js";
 import { resolveComposioServerConfig } from "../../composio/index.js";
 
 /** Header names whose value is a credential (`Authorization`, `X-Api-Key`, `Cookie`, ...). */
 const SECRET_HEADER = /authorization|api[-_]?key|token|secret|password|cookie|auth/i;
+
+/** Keep account identity, capabilities and credential changes on one restart boundary. */
+function pinnedEmailService(config: AtomicAgentConfig): EmailService {
+  const email = structuredClone(config.email);
+  return new EmailService({
+    config: () => ({ email }),
+    env: {
+      [EMAIL_IMAP_PASSWORD_ENV]: process.env[EMAIL_IMAP_PASSWORD_ENV],
+      [EMAIL_SMTP_PASSWORD_ENV]: process.env[EMAIL_SMTP_PASSWORD_ENV],
+    },
+  });
+}
 
 /**
  * The exact secrets masked in tool output (ATO-1077): the agent's `.env`
@@ -138,6 +151,7 @@ export function registerRuntimeCoreTools(input: {
 
   registerOsTools(toolRegistry, {
     ...dangerous,
+    email: config.email.enabled ? pinnedEmailService(config) : new AtomicMailService(),
     config: {
       http: config.http,
       web: config.web,
@@ -348,6 +362,7 @@ export async function connectRuntimeMcpCatalog(input: {
   const { config, options, toolRegistry, logger, dangerous, llama, initialGrammar,
     visionOnLiveRoute, resolveCurrentRunMode, onMcpToolNameRule, resolveContextWindow } = input;
   let grammar = initialGrammar;
+  const genericEmailAtStart = config.email.enabled ? pinnedEmailService(config) : null;
 
   // MCP client subsystem. The manager is always constructed so the
   // live-control surface (TUI panel, slash commands — planned) stays
@@ -468,6 +483,11 @@ export async function connectRuntimeMcpCatalog(input: {
   // The closure captures everything else (vision/memory/tasks gates,
   // baseline grammar, etc.) so `refreshMcp()` can re-run it after a
   // server is added or removed at runtime without touching the rest.
+  const emailAvailable = (): boolean => {
+    return genericEmailAtStart
+      ? genericEmailAtStart.readiness().level === "ready"
+      : readAtomicMailApiKey() !== null && config.atomicMail.address !== null;
+  };
   const rebuildToolDescriptorsFromMcp = (): readonly ToolDescriptor[] => {
     const liveMcpEnabled = mcpManager.listServerNames().length > 0;
     const base = filterToolDescriptorsByConfig(DEFAULT_TOOL_DESCRIPTORS, {
@@ -490,8 +510,7 @@ export async function connectRuntimeMcpCatalog(input: {
           config.tasks.enabled && config.tasks.agentToolsEnabled,
       },
       email: {
-        available:
-          readAtomicMailApiKey() !== null && config.atomicMail.address !== null,
+        available: emailAvailable(),
       },
       mcp: { enabled: liveMcpEnabled },
       // Read at rebuild time, not boot time: the Integrations hub calls

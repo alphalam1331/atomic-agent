@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { GATE_CTX, GateBackend, recordingGate } from "./browser-gate-test-helpers.js";
-import { buildBrowserNavigateTool, buildBrowserReadAriaTool } from "./index.js";
+import { buildBrowserClickTool, buildBrowserNavigateTool, buildBrowserReadAriaTool, buildBrowserTypeTool } from "./index.js";
 import { blockedHostOfPage, type BrowserDomainPolicy } from "./browser-domain-policy.js";
 import type { AriaSnapshot } from "./browser-backend.js";
 
@@ -41,6 +41,18 @@ describe("blocked site inside a frame", () => {
     const result = await buildBrowserNavigateTool(backend, options, POLICY).run({ url: "https://news.example/" }, GATE_CTX);
     expect(result.status).toBe("ok");
     expect(result.details.worldSnapshot).toBeUndefined();
+  });
+
+  it("automatic click/type feedback never exposes a blocked frame", async () => {
+    const backend = new FramingBackend();
+    const { options } = recordingGate(true);
+    const click = await buildBrowserClickTool(backend, options, POLICY).run({ ref: "e1" }, GATE_CTX);
+    const type = await buildBrowserTypeTool(backend, options, POLICY).run({ ref: "e1", text: "x" }, GATE_CTX);
+    expect(click.status).toBe("ok");
+    expect(type.status).toBe("ok");
+    expect(click.details.worldSnapshot).toBeUndefined();
+    expect(type.details.worldSnapshot).toBeUndefined();
+    expect(JSON.stringify([click, type])).not.toContain("secret page text");
   });
 
   it("a page without blocked frames reads normally", async () => {

@@ -17,6 +17,7 @@
 <link rel="stylesheet" href="css/window-snapshot.css">
 <link rel="stylesheet" href="css/overnight.css">
 <link rel="stylesheet" href="css/file-preview.css">
+<link rel="stylesheet" href="css/browser.css">
 <link rel="stylesheet" href="css/onboarding.css">
 <link rel="stylesheet" href="css/settings.css">
 <link rel="stylesheet" href="css/settings-data.css">
@@ -37,6 +38,7 @@
         <section id="content"></section>
         <!-- ATO-1053: a file previewed beside the chat (file-preview.js draws it, render() never does). -->
         <aside id="fpreview" hidden></aside>
+        <aside id="browserpane" aria-label="Browser" hidden></aside>
         <aside id="inspector"></aside>
       </div>
       <div id="console" class="hide"></div>
@@ -84,6 +86,7 @@
 <script src="approval-rules.js"></script>
 <script src="composer-engines.js"></script>
 <script src="composio.js"></script>
+<script src="email.js"></script>
 <!-- ATO-859: Telegram pairing from the app, the state and the card; renderer.js wires the IPC. -->
 <script src="telegram-pairing.js"></script>
 <!-- ATO-900 item 6: the Telegram tab's Restart agent, its state, words and button. -->
@@ -115,6 +118,7 @@
 <!-- ATO-1053: the file preview panel (main reads the file; this only draws it). -->
 <script src="chat-files.js"></script>
 <script src="file-preview.js"></script>
+<script src="browser-pane.js"></script>
 <!-- ATO-464: a finished turn's steps fold into one summary line. -->
 <script src="turn-summary.js"></script>
 <!-- ATO-1272: the transcript draws its newest part; earlier rows are one "Show earlier" row. -->

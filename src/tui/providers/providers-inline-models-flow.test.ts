@@ -51,15 +51,17 @@ vi.mock("../../config/llm-provider-commands.js", async (importOriginal) => {
     setActiveTextProviderInConfig: (id: string) => {
       currentConfig = {
         ...currentConfig,
-        llm: { ...currentConfig.llm!, activeTextProvider: id },
-      } as AtomicAgentConfig;
+        llm: { ...currentConfig.llm, activeTextProvider: id },
+      };
     },
   };
 });
 
-let currentConfig: AtomicAgentConfig;
+// These mocked provider-list fixtures intentionally supply only the LLM surface.
+type ProviderConfigFixture = { llm: NonNullable<AtomicAgentConfig["llm"]> };
+let currentConfig: ProviderConfigFixture;
 
-function configWithNous(baseUrl: string): AtomicAgentConfig {
+function configWithNous(baseUrl: string): ProviderConfigFixture {
   return {
     llm: {
       activeTextProvider: "nous",
@@ -76,10 +78,10 @@ function configWithNous(baseUrl: string): AtomicAgentConfig {
         },
       ],
     },
-  } as AtomicAgentConfig;
+  };
 }
 
-function configWithOpenRouter(): AtomicAgentConfig {
+function configWithOpenRouter(): ProviderConfigFixture {
   return {
     llm: {
       activeTextProvider: "or",
@@ -95,13 +97,13 @@ function configWithOpenRouter(): AtomicAgentConfig {
         },
       ],
     },
-  } as AtomicAgentConfig;
+  };
 }
 
 function configWithTwoProviders(
   nousBaseUrl: string,
   xaiBaseUrl: string,
-): AtomicAgentConfig {
+): ProviderConfigFixture {
   return {
     llm: {
       activeTextProvider: "nous",
@@ -126,7 +128,7 @@ function configWithTwoProviders(
         },
       ],
     },
-  } as AtomicAgentConfig;
+  };
 }
 
 function emptyKey(overrides: Partial<Key> = {}): Key {

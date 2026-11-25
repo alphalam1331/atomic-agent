@@ -38,6 +38,19 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 79.
 - `localModels.download.connections` (default `16`).
 - `localModels.download.hfEndpoint` (default `"https://huggingface.co"`).
 
+## email
+
+- `email.enabled` (default `false`).
+- `email.address` (default `null`).
+- `email.imap.host` (default `null`).
+- `email.imap.port` (default `993`).
+- `email.imap.security` (default `"tls"`).
+- `email.imap.username` (default `null`).
+- `email.smtp.host` (default `null`).
+- `email.smtp.port` (default `465`).
+- `email.smtp.security` (default `"tls"`).
+- `email.smtp.username` (default `null`).
+
 ## log
 
 - `log.level` (default `"info"`).

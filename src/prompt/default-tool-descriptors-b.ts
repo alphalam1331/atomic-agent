@@ -37,7 +37,7 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
   {
     name: "os.email.inbox",
     summary:
-      "Newest messages in the agent's own e-mail inbox (Atomic Mail): sender, subject, preview, unread.",
+      "Newest messages in the agent's configured e-mail inbox: sender, subject, preview, unread.",
     argsSchema: "{ limit?: number }",
     tier: "rare",
   },

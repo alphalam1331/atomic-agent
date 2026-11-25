@@ -167,6 +167,15 @@ describe("maskSecrets: values the agent knows", () => {
       }),
     ).toEqual([{ label: "OPENAI_API_KEY", value: "abc12345678" }]);
   });
+
+  it("masks both stored and decoded email passwords", () => {
+    const password = 'mail-Secret12!"\\with spaces';
+    const encoded = Buffer.from(password).toString("base64");
+    const known = knownSecretsFromEnv({ EMAIL_IMAP_PASSWORD_B64: encoded });
+    expect(maskSecrets(`${password} ${encoded}`, known)).toBe(
+      "[redacted:EMAIL_IMAP_PASSWORD_B64] [redacted:EMAIL_IMAP_PASSWORD_B64]",
+    );
+  });
 });
 
 describe("maskSecrets: ordinary output is left alone", () => {

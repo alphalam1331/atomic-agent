@@ -12,12 +12,16 @@ export interface CapturedWorldSnapshot {
   text: string;
 }
 
+/** Automatic action feedback stays small; explicit full reads remain available. */
+export const POST_ACTION_MAX_CHARS = 8_000;
+
 /**
- * Best-effort ARIA snapshot right after a navigation/search/click, so the
+ * Best-effort ARIA snapshot right after a navigation/search/action, so the
  * step-executor can fold it into `session.worldSnapshot` and the model
  * observes the current page in the next prompt's `### world` section.
- * The view is the model's default (`aria-view.ts`): the whole tree for a
- * cloud model, the interactive controls for a local or small-window one.
+ * Navigation/search use the model's default (`aria-view.ts`). Click/type
+ * feedback uses the interactive view capped at 8k chars (or the smaller
+ * context budget), avoiding a second inference just to request fresh refs.
  *
  * Swallows snapshot failures on purpose: the mutating tool (navigate,
  * search, …) already succeeded, and we do not want an ARIA timeout to
@@ -30,9 +34,10 @@ export interface CapturedWorldSnapshot {
  */
 export async function captureWorldSnapshot(
   backend: BrowserBackend,
-  ctx: Pick<ToolContext, "modelMode" | "contextWindowTokens" | "sessionId">,
+  ctx: Pick<ToolContext, "modelMode" | "contextWindowTokens" | "sessionId"> & Partial<Pick<ToolContext, "signal">>,
   policy: BrowserDomainPolicy = EMPTY_DOMAIN_POLICY,
   store?: AriaSnapshotStore,
+  afterAction = false,
 ): Promise<CapturedWorldSnapshot | undefined> {
   const view: AriaViewContext = {
     ...(ctx.modelMode ? { modelMode: ctx.modelMode } : {}),
@@ -40,7 +45,9 @@ export async function captureWorldSnapshot(
     sessionId: ctx.sessionId,
   };
   try {
-    const result = await readAriaView(backend, {}, view, policy, store);
+    ctx.signal?.throwIfAborted();
+    const result = await readAriaView(backend, afterAction ? { mode: "interactive", maxChars: POST_ACTION_MAX_CHARS } : {}, view, policy, store);
+    ctx.signal?.throwIfAborted();
     if (result.kind !== "ok") return undefined;
     return { kind: "browser", digest: result.view.digest, text: result.view.text };
   } catch {

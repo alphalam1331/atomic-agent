@@ -41,7 +41,7 @@ export interface ToolGateConfig {
   };
   tasks: { agentToolsEnabled: boolean };
   /**
-   * The agent's own inbox. Without a registered Atomic Mail inbox the
+   * The agent's own inbox. Without a configured email or Atomic Mail inbox the
    * `os.email.*` tools can only answer "set one up", so they leave the
    * prefix; the tools stay registered and grammar-valid.
    */

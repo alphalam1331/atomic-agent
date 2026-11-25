@@ -121,6 +121,16 @@ describe("os.email.inbox — hostile and large inboxes", () => {
 });
 
 describe("os.email.send", () => {
+  it("uses a configured generic account and preserves approval before delivery", async () => {
+    const send = vi.fn(async () => "smtp-id");
+    const approvals = gate(false);
+    const email = { readiness: () => ({ level: "ready" as const, address: "agent@example.com" }), listInbox: vi.fn(async () => []), send };
+    const tool = buildOsEmailSendTool({ approvals, approvalRequired: true, email });
+    await expect(tool.run({ to: "user@example.com", subject: "Hello", text: "Body" }, ctx)).rejects.toBeInstanceOf(ApprovalDeniedError);
+    expect(send).not.toHaveBeenCalled();
+    expect(approvals.request).toHaveBeenCalledWith(expect.objectContaining({ category: "email", affectedResources: ["user@example.com"] }), { signal: ctx.signal });
+  });
+
   it("asks for approval with recipient and subject, then sends", async () => {
     const send = vi.fn(async () => "S9");
     const approvals = gate(true);

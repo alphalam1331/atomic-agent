@@ -46,6 +46,8 @@ import { installRiskReviewer } from "./composition/runtime-risk-review.js";
 import type { DangerousToolOptions } from "../approval/dangerous-tool.js";
 
 import { PlaywrightBackend } from "../tools/browser/playwright-backend.js";
+import { EmbeddedBrowserBackend } from "../tools/browser/embedded-browser-backend.js";
+import { embeddedBrowserOptionsFromEnvironment } from "../tools/browser/embedded-browser-transport.js";
 import type { BrowserBackend } from "../tools/browser/browser-backend.js";
 import { DeclaredInputsRegistry, ShellJobRegistry } from "../tools/os/index.js";
 import { ToolOutputSpill } from "../tools/index.js";
@@ -78,6 +80,7 @@ import { createLessonLifecycleHook } from "../memory/lessons/lesson-lifecycle-ho
 import { createMemoryHealthAnnouncer } from "./announce-memory-health.js";
 
 import { readAtomicMailApiKey } from "../atomic-mail/index.js";
+import { EmailService } from "../email/index.js";
 import { buildCapabilities } from "../prompt/capabilities.js";
 
 import type { SkillCatalogEntry, ToolDescriptor } from "../prompt/stable-prefix.js";
@@ -224,9 +227,12 @@ export async function createAgentRuntime(
   // read as an active-backend failure while the real provider is fine.
   const localProfile = await prepareRuntimeLocalProfile(config, options, logger);
   const { llama, profile, slotManager } = localProfile;
+  const embeddedBrowser = config.browser.connect === "agent" && !config.browser.cdpUrl
+    ? embeddedBrowserOptionsFromEnvironment(process.env)
+    : undefined;
   const browserBackend: BrowserBackend =
     options.overrides?.browserBackend ??
-    new PlaywrightBackend({
+    (embeddedBrowser ? new EmbeddedBrowserBackend(embeddedBrowser) : new PlaywrightBackend({
       userDataDir: config.paths.browserProfileDir,
       channel: config.browser.channel,
       executablePath: config.browser.executablePath,
@@ -236,7 +242,7 @@ export async function createAgentRuntime(
       cdpUrl: config.browser.cdpUrl,
       connect: config.browser.connect,
       userChromeDataDir: config.browser.userChromeDataDir,
-    });
+    }));
   const preparedSkills = await prepareRuntimeSkills(config, workingDir, logger);
   const { skillRegistry } = preparedSkills;
 
@@ -244,7 +250,9 @@ export async function createAgentRuntime(
     workingDir,
     browserChannel: config.browser.channel,
     // Only an inbox this machine holds the key for is the agent's to use.
-    emailAddress: readAtomicMailApiKey() ? config.atomicMail.address : null,
+    emailAddress: config.email.enabled
+      ? (() => { const ready = new EmailService().readiness(); return ready.level === "ready" ? ready.address : null; })()
+      : readAtomicMailApiKey() ? config.atomicMail.address : null,
   });
 
   // Memory-v2 phase 7a — fail-fast clamp/decay validation. The

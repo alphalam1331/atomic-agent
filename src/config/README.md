@@ -23,6 +23,7 @@ This area owns configuration and compatibility. Read [AGENTS.md](AGENTS.md) befo
 - [tui-config.ts](tui-config.ts)
 - [channel-config.ts](channel-config.ts)
 - [integration-config.ts](integration-config.ts)
+- [email-config.ts](email-config.ts)
 - [session-rail-config.ts](session-rail-config.ts)
 - [webhook-config.ts](webhook-config.ts)
 - [load-config.ts](load-config.ts)
@@ -58,6 +59,8 @@ memory/ owns the full stored memory policy with separate types/default/parser mo
 local-models/ owns separate runtime/user types, fresh default construction and two-phase parsing. Root preserves compatible types/functions and composes LLM providers between early managed/embedding/download preparation and late completion/template/thinking validation. Defaults are explicit per-expression lookups; version helpers retain conditional reads. Concrete catalog/backend/constants remain dependencies, while process, download and environment ownership stays outside config.
 
 tui-config owns appearance/input/onboarding/terminal notification settings; channel-config owns Telegram/Discord/swarm; integration-config owns download notifications/mail/Git/Composio settings. All use explicit defaults and retain their old late positions. Root keeps the two one-argument default-dependent TUI parser wrappers; pure helpers/types are compatible re-exports. Read [their shared guide](docs/frontend-integration.md) for captured-default, retained-reference and migration seams. Connection, delivery, secrets and UI behavior remain with runtime/frontend owners.
+
+email-config owns the separate operator-configured IMAP/SMTP account. It is additive and disabled by default; enabled accounts require an address and both server hosts/usernames. Host, port, transport security and single-line values are validated without opening connections. Passwords use `EMAIL_IMAP_PASSWORD_B64` and `EMAIL_SMTP_PASSWORD_B64` in the owner-only state-directory `.env`, decoded only by the email service; they are absent from user/runtime config.
 
 agent/ owns the full agent runtime/user policy around the existing execution leaf. http-config owns outbound HTTP; tool-config supplies separate projects/shell/vision slots; skills-config, session-retention-config and tracing-config own their resource settings. Root keeps early references/legacy trace preparation and original late order; its one-argument ClawHub wrapper passes captured defaults explicitly. Read [execution/resource configuration](docs/execution-resource.md) for eager reads, migration and lifetime boundaries.
 

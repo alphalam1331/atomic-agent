@@ -24,6 +24,7 @@ beforeAll(async () => {
   await writeFile(join(cwd, "sign-in.sh"), "#!/bin/sh\ni=$((1+1))\necho 'To sign in, open https://example.test/device and enter ABCD-1234'\n");
   await writeFile(join(cwd, "opens.sh"), "#!/bin/sh\ni=$((1+1))\necho 'starting'\nopen https://x.com\n");
   await writeFile(join(cwd, "open.py"), 'import subprocess\nsubprocess.run(["open", "-a", "Safari", "https://x.com"])\n');
+  await writeFile(join(cwd, "bridge.py"), 'import os, urllib.request\nurllib.request.urlopen(os.environ["ATOMIC_AGENT_BROWSER_ENDPOINT"])\n');
 });
 afterAll(async () => {
   await rm(cwd, { recursive: true, force: true });
@@ -50,6 +51,8 @@ const CASES: [string, boolean][] = [
  [`npm run build && npx playwright test`, false],
  [`curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh | bash`, false],
  [`echo hello | grep h`, false],
+ [`curl http://localhost:3030/browser`, false],
+ [`echo 'ATOMIC_AGENT_BROWSER_TOKEN is private'`, false],
  [`echo 'To sign in, open https://example.test/device and enter the code'`, false],
  [`printf "open https://example.test/device\\n" >&2`, false],
  [`./sign-in.sh`, false],
@@ -94,6 +97,11 @@ const CASES: [string, boolean][] = [
  [`echo 'open https://x.com' > run.sh`, true],
  [`echo hi; open https://x.com`, true],
  [`./opens.sh`, true],
+ [`printenv ATOMIC_AGENT_BROWSER_TOKEN`, true],
+ [`curl -H "Authorization: Bearer $ATOMIC_AGENT_BROWSER_TOKEN" "$ATOMIC_AGENT_BROWSER_ENDPOINT"`, true],
+ [`node -e 'fetch(process.env.ATOMIC_AGENT_BROWSER_ENDPOINT)'`, true],
+ [`curl --data '{"operation":"acquire"}' http://127.0.0.1:1234/browser`, true],
+ [`python3 bridge.py`, true],
 ];
 
 describe("checkBrowserBypassLine", () => {
@@ -118,6 +126,8 @@ describe("checkBrowserBypassArgv", () => {
       checkBrowserBypassArgv("osascript", ["-e", 'tell application "Google Chrome" to get {URL, title} of active tab of front window'], cwd),
     ).not.toBeNull();
     expect(checkBrowserBypassArgv("open", ["-a", "Google Chrome", "https://mail.google.com/"], cwd)).not.toBeNull();
+    expect(checkBrowserBypassArgv("node", ["-e", 'fetch(process.env["ATOMIC_AGENT_BROWSER_ENDPOINT"])'], cwd)).not.toBeNull();
+    expect(checkBrowserBypassArgv("curl", ["http://127.0.0.1:1234/browser", "--data", '{"operation":"cdp"}'], cwd)).not.toBeNull();
   });
 
   it("keeps quit, start and non-browser opens", () => {

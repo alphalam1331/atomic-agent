@@ -15,16 +15,24 @@ describe.skipIf(process.platform === "win32")(
       ATO347_TEST_API_KEY: "leaked-key-value",
       ATO347_PASS_TOKEN: "passed-token-value",
       ATO347_PLAIN: "plain-value",
+      ATOMIC_AGENT_BROWSER_ENDPOINT: "http://127.0.0.1:1234/browser",
+      ATOMIC_AGENT_BROWSER_TOKEN: "private-browser-capability",
     } as const;
+    const previous = new Map<string, string | undefined>();
     let dir: string;
 
     beforeEach(async () => {
       dir = await mkdtemp(join(tmpdir(), "atomic-shell-env-"));
+      for (const name of Object.keys(NAMES)) previous.set(name, process.env[name]);
       Object.assign(process.env, NAMES);
     });
 
     afterEach(async () => {
-      for (const name of Object.keys(NAMES)) delete process.env[name];
+      for (const [name, value] of previous) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+      previous.clear();
       await rm(dir, { recursive: true, force: true });
     });
 
@@ -76,6 +84,17 @@ describe.skipIf(process.platform === "win32")(
         makeCtx(),
       );
       expect(result.summary).toContain("inline-value");
+    });
+
+    it("does not inherit private browser capabilities even through envPassthrough", async () => {
+      const result = await tool(["ATOMIC_AGENT_BROWSER_ENDPOINT", "ATOMIC_AGENT_BROWSER_TOKEN"]).run({
+        cmd: process.execPath,
+        args: ["-e", "process.stdout.write(JSON.stringify(Object.entries(process.env).filter(([name]) => name.startsWith('ATOMIC_AGENT_'))))"],
+      }, makeCtx());
+      expect(result.status).toBe("ok");
+      expect(result.summary).not.toContain("http://127.0.0.1:1234/browser");
+      expect(result.summary).not.toContain("private-browser-capability");
+      expect(process.env.ATOMIC_AGENT_BROWSER_TOKEN).toBe("private-browser-capability");
     });
   },
 );

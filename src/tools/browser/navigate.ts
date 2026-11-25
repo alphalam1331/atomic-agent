@@ -60,7 +60,7 @@ export function buildBrowserNavigateTool(
   return {
     name: "browser.navigate",
     description:
-      "Navigate the active tab to a URL. Non-http(s) schemes require approval.",
+      "Open a URL in the controlled browser and refresh the world snapshot. Default for reading and interacting with websites when browser tools are available for this role. Non-http(s) schemes require approval.",
     readonly: false,
     async run(rawArgs, ctx) {
       const url = rawArgs.url;

@@ -8,6 +8,8 @@ import {
 } from "./browser-domain-policy.js";
 import { gateBrowserAction } from "./gate-browser-action.js";
 import { recheckLandedPage } from "./gate-browser-url.js";
+import { captureWorldSnapshot } from "./capture-world-snapshot.js";
+import type { AriaSnapshotStore } from "./aria-view.js";
 
 const REF_PATTERN = /^[a-zA-Z0-9]+$/;
 
@@ -19,6 +21,7 @@ export function buildBrowserClickTool(
   backend: BrowserBackend,
   dangerous: DangerousToolOptions,
   policy: BrowserDomainPolicy = EMPTY_DOMAIN_POLICY,
+  store?: AriaSnapshotStore,
 ): ToolDefinition {
   return {
     name: "browser.click",
@@ -55,6 +58,7 @@ export function buildBrowserClickTool(
         ctx,
       );
       if (refused) return refused;
+      ctx.signal.throwIfAborted();
       const payload: ClickInput = {
         ref,
         ...(button !== undefined ? { button } : {}),
@@ -63,11 +67,12 @@ export function buildBrowserClickTool(
       const result = await backend.click(payload);
       const landed = await recheckLandedPage(backend, policy, "browser.click");
       if (landed) return landed;
+      const worldSnapshot = await captureWorldSnapshot(backend, ctx, policy, store, true);
       return compressToolResult({
         tool: "browser.click",
         status: "ok",
         output: `clicked ref=${result.clickedRef}`,
-        details: { ref: result.clickedRef },
+        details: { ref: result.clickedRef, ...(worldSnapshot ? { worldSnapshot } : {}) },
       });
     },
   };

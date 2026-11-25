@@ -23,6 +23,7 @@ import { resolveRunMode, type ResolvedRunMode } from "../../llm/run-mode/index.j
 import * as mcp from "../../mcp/index.js";
 import type { McpToolMeta, McpSamplingHandler } from "../../mcp/index.js";
 import * as composio from "../../composio/index.js";
+import * as emailTransports from "../../email/email-transports.js";
 import { setDynamicResourceClassResolver } from "../../agent/tool-resource-class.js";
 import { createRuntimeToolRegistry, registerRuntimeCoreTools, connectRuntimeMcpCatalog, mcpGrammarHookFor, registerRuntimeFusionAndReadScope, runtimeKnownSecrets } from "./runtime-tool-catalog.js";
 import { ModelProfileManager } from "../../llm/model-profile-manager.js";
@@ -223,6 +224,61 @@ describe("runtime tool assembly phases and live MCP catalog", () => {
     expect(vision.some(tool => tool.name === "vision.describe")).toBe(true); expect(owner.effectiveToolDescriptors()).toBe(vision);
     setFusion(false); setVision(false);
     expect(owner.effectiveToolDescriptors().map(tool => tool.name)).toEqual(initial.map(tool => tool.name));
+  });
+
+  it("keeps generic email catalog availability at the restart boundary and retains Atomic Mail fallback", async () => {
+    const { input } = deps();
+    vi.stubEnv("ATOMIC_MAIL_API_KEY", "");
+    vi.stubEnv("EMAIL_IMAP_PASSWORD_B64", Buffer.from("imap-secret").toString("base64"));
+    vi.stubEnv("EMAIL_SMTP_PASSWORD_B64", Buffer.from("smtp-secret").toString("base64"));
+    input.config.email = {
+      enabled: true, address: "agent@example.com",
+      imap: { host: "imap.example.com", port: 993, security: "tls", username: "agent" },
+      smtp: { host: "smtp.example.com", port: 587, security: "starttls", username: "agent" },
+    };
+    const owner = await connect(input);
+    const hasEmail = () => owner.effectiveToolDescriptors().some(tool => tool.name === "os.email.send");
+    expect(hasEmail()).toBe(true);
+    vi.stubEnv("EMAIL_IMAP_PASSWORD_B64", "");
+    input.config.email.address = "replacement@example.com";
+    await owner.createRefreshMcp()();
+    expect(hasEmail()).toBe(true);
+    input.config.atomicMail.address = "agent@atomicmail.ai";
+    vi.stubEnv("ATOMIC_MAIL_API_KEY", "atomic-key");
+    const incomplete = await connect(input);
+    expect(incomplete.effectiveToolDescriptors().some(tool => tool.name === "os.email.send")).toBe(false);
+    input.config.email.enabled = false;
+    const fallback = await connect(input);
+    expect(fallback.effectiveToolDescriptors().some(tool => tool.name === "os.email.send")).toBe(true);
+  });
+
+  it("keeps the registered generic sender and passwords until restart", async () => {
+    const config = getConfig(); config.browser.enabled = false; config.web.search.persistCache = false;
+    config.email = { enabled: true, address: "original@example.com",
+      imap: { host: "imap.example.com", port: 993, security: "tls", username: "original" },
+      smtp: { host: "smtp.example.com", port: 465, security: "tls", username: "original" } };
+    vi.stubEnv("EMAIL_IMAP_PASSWORD_B64", Buffer.from("original-imap").toString("base64"));
+    vi.stubEnv("EMAIL_SMTP_PASSWORD_B64", Buffer.from("original-smtp").toString("base64"));
+    const sendMail = vi.fn(async () => ({ messageId: "sent" }));
+    const smtp = vi.spyOn(emailTransports, "createEmailSmtpClient").mockReturnValue({ sendMail, verify: async () => true, close: () => {} });
+    const profileStore = new ProfileStore({ dbFile: join(directory, "profile.sqlite") });
+    const notesStore = new MemoryStore({ dbFile: join(directory, "notes.sqlite"), maxEntries: 20 });
+    const shellJobs = new osTools.ShellJobRegistry({ jobMaxMs: 1000, maxJobs: 2 });
+    try {
+      const registration = vi.spyOn(osTools, "registerOsTools");
+      registerRuntimeCoreTools({ config, toolRegistry: new ToolRegistry(), dangerous: { approvals: new ApprovalGate({ emit: () => {}, level: 5 }), approvalRequired: true }, logger,
+        sessionStore: { listRecentWorkingDirs: () => [], listSummaryPage: () => [], listChatLines: () => [] }, resolveOriginalRequest: () => undefined,
+        declaredInputs: new osTools.DeclaredInputsRegistry(), shellJobs,
+        skillRegistry: new SkillRegistry({ globalDir: join(directory, "skills"), projectDir: null }), profileStore, notesStore });
+      const email = registration.mock.calls[0]?.[1].email;
+      if (!email) throw new Error("runtime email dependency missing");
+      config.email.address = "replacement@example.com";
+      config.email.smtp.username = "replacement";
+      vi.stubEnv("EMAIL_SMTP_PASSWORD_B64", Buffer.from("replacement-smtp").toString("base64"));
+      await email.send({ to: "user@example.com", subject: "Hello", text: "Body" });
+      expect(sendMail).toHaveBeenCalledWith(expect.objectContaining({ from: "original@example.com" }));
+      expect(smtp).toHaveBeenCalledWith(expect.objectContaining({ auth: { user: "original", pass: "original-smtp" } }));
+    } finally { shellJobs.endAll(); notesStore.close(); profileStore.close(); }
   });
 
   it("tool search (ATO-558): auto defers non-core tools on a small window, off never, and tool.search loads them", async () => {

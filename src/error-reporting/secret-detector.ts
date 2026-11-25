@@ -374,6 +374,12 @@ export function knownSecretsFromEnv(
     if (typeof value !== "string" || value.length < MIN_KNOWN_SECRET_LENGTH) continue;
     if (!isSecretEnvName(name)) continue;
     out.push({ label: name, value });
+    // Email passwords use base64 only to preserve arbitrary punctuation
+    // through the dotenv loader. Mask the actual credential as well.
+    if (name === "EMAIL_IMAP_PASSWORD_B64" || name === "EMAIL_SMTP_PASSWORD_B64") {
+      const decoded = Buffer.from(value, "base64").toString("utf8");
+      if (decoded.length >= MIN_KNOWN_SECRET_LENGTH) out.push({ label: name, value: decoded });
+    }
   }
   return out;
 }

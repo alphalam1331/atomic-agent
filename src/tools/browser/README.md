@@ -3,7 +3,19 @@
 Status: current
 Owner: src/tools/browser/
 
-`browser.*` drives a Chromium-family browser through Playwright (`playwright-backend.ts`) behind the `BrowserBackend` interface, so tests run on a fake backend.
+`browser.*` uses the `BrowserBackend` interface, so frontends share the tool contract and approval/domain gates. CLI/TUI and explicitly configured external connections use Playwright (`playwright-backend.ts`). Desktop startup supplies a private endpoint and capability token for `embedded-browser-backend.ts`: its native Chromium tabs are the tabs shown beside chat, with a persistent agent-owned profile distinct from the desktop shell and the user's normal browser profile. Explicit `browser.connect: "user-chrome"` or `browser.cdpUrl` continues to select the external backend.
+
+## Embedded desktop backend
+
+The [desktop browser service](../../../desktop/main/browser-service.ts) owns sandboxed `WebContentsView` instances without the shell's privileged preload. The agent runtime connects through an authenticated loopback-only HTTP bridge (`embedded-browser-transport.ts`), with a fixed CDP method allowlist scoped to those views; it cannot discover targets, inspect the shell, read cookies or use a browser-wide debugging port. Endpoint/token are passed explicitly at startup, never saved in browser config or prompt facts. Both environment values must be present to select this backend.
+
+Each tool holds one serialized lease across ref preflight, element description, approval, action and its updated observation. Manual takeover, direct user input, manual tab/window changes and cancellation revoke that lease at the desktop, stop loads and detach debugging. Resume requires a fresh lease and snapshot: refs include the desktop epoch and tab identity, so a decision made before takeover cannot act afterward. Cancelling a turn aborts HTTP and revokes its lease; runtime shutdown disconnects the agent runtime without deleting the persistent profile.
+
+Page reads use Chromium's accessibility tree, with opaque refs resolved back to DOM nodes for the same action classifier used by Playwright. In-process iframe trees are read separately; their controls retain their own frame URL and clicks account for iframe offsets and scale. Region reads fetch only descendants of the requested AX node. AX values and editable descendants are omitted; secret values collected inside each readable frame are also masked if echoed elsewhere in the tree. Only isolated execution-context IDs are retained between reads, and title/masking facts share one frame read; page content and masking values are never cached.
+
+Electron's native frame inventory supplies authoritative URLs and document versions, including cross-process frames missing from the main CDP target. Before/after signatures reject reads or captures racing a frame/document change, and every native URL reaches the domain gate. Cross-process iframe bodies are omitted with an explicit note; open that frame's URL in an agent tab to read or operate it. Screenshots mask editable fields in every frame and refuse a page with a cross-process or otherwise unmaskable frame. An unreadable in-process frame fails closed. Clicks check enabled/visible state and hit testing before native input; covered elements and rotated/skewed iframes fail with instructions for a fresh read or separate tab. The embedded backend supports `domcontentloaded` and `load` navigation waits; an explicit `networkidle` request is rejected before navigation and remains available with the external backend.
+
+Website popups open as separate owned tabs under manual control. They do not retain `window.opener`; sign-in flows that require opener callbacks should use the existing external browser mode. See the [desktop browser guide](../../../desktop/README.md) for the pane, profile and takeover behavior.
 
 ## Approval gate
 
@@ -43,9 +55,11 @@ A page on a blocked host is never captured. A capture is discarded, never saved,
 - `full`: the whole tree, as before.
 - `interactive`: one line per control (interactive roles, plus any other ref'd node Playwright marks clickable) under landmark / heading headers; page text hidden. Refs are Playwright's own, so click / type resolve them exactly as from the full tree. Names that would read the same once clipped are shown longer.
 - `diff`: changes by ref since this tab's last snapshot (`+` added, `~` changed with `was:`, `-` gone). Falls back to `interactive` on a new URL or without history.
-- `region` with `ref`: the subtree under one ref.
+- `region` with `ref`: capture only that locator's subtree, avoiding a whole-page snapshot. It retains the whole page's frame URLs for the domain gate, masks secret values, and leaves whole-page diff history intact. Use the refs from the resulting view; refs outside that subtree may become stale.
 
-Without `mode`, a local model or a window ≤ 32k tokens gets `interactive`; others get `full`. The same default applies to the world snapshot after navigate / search. The size budget is 4% of the window (2k–24k chars). Compact views read the whole tree before filtering; a name Playwright writes as a quoted YAML key (`- 'button "Pay: $5" [ref=e7]'`) is unquoted first, so such a control is never dropped. A blocked page, or one framing a blocked site (AI-mode snapshots include iframe content), is neither rendered nor remembered for `diff`.
+Without `mode`, a local model or a window ≤ 32k tokens gets `interactive`; others get `full`. The same default applies to the world snapshot after navigate / search. The size budget is 4% of the window (2k–24k chars). Interactive/diff views read the whole tree before filtering; a name Playwright writes as a quoted YAML key (`- 'button "Pay: $5" [ref=e7]'`) is unquoted first, so such a control is never dropped. A blocked page, or one framing a blocked site (AI-mode snapshots include iframe content), is neither rendered nor remembered for `diff`.
+
+Successful click/type calls refresh `details.worldSnapshot` with interactive controls, with an ~8k-character body budget (or the smaller context budget). The next step receives current refs and control state through the existing world snapshot; no extra inference or stable-prefix change is involved. The observation is best effort: a read failure does not turn a successful action into a failed action. It uses the same domain, frame and user-profile read gates, so blocked/uncleared pages are not captured. Explicit full/region reads remain available for page text. [Performance measurements](docs/performance.md) separate startup, page extraction, action latency and observation overhead.
 
 ## Your own Chrome
 

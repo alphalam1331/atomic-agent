@@ -181,26 +181,30 @@ async function tabKey(backend: BrowserBackend, sessionId: string): Promise<strin
 
 /**
  * Snapshot the active page and render the requested (or default) view.
- * Compact views read the whole tree (`full: true`) so no control is lost
- * to the backend's own size cut before filtering. A blocked page, or one
+ * Interactive/diff views read the whole tree (`full: true`) so no control
+ * is lost to the backend's size cut before filtering. Region reads ask
+ * the backend for that locator's subtree and never replace whole-page
+ * diff history with a partial tree. A blocked page, or one
  * framing a blocked site, and in the user's own Chrome a site not
  * cleared this session (`gate-page-read.ts`; `ask` asks for it), is
  * refused before anything is rendered or remembered.
  */
 export async function readAriaView(
   backend: BrowserBackend,
-  request: { mode?: AriaViewMode; ref?: string; depth?: number },
+  request: { mode?: AriaViewMode; ref?: string; depth?: number; maxChars?: number },
   view: AriaViewContext,
   policy: BrowserDomainPolicy = EMPTY_DOMAIN_POLICY,
   store?: AriaSnapshotStore,
   ask?: PageReadAsk,
 ): Promise<ReadAriaViewResult> {
   const mode = request.mode ?? defaultAriaViewMode(view);
+  if (mode === "region" && !request.ref) return { kind: "error", message: '`ref` is required with mode "region"' };
   const cloud = view.modelMode === "cloud";
   const wantsWholeTree = mode !== "full" || cloud;
   const snapshot = await backend.snapshot({
     ...(request.depth !== undefined ? { depth: request.depth } : {}),
     ...(wantsWholeTree ? { full: true } : {}),
+    ...(mode === "region" && request.ref ? { ref: request.ref } : {}),
   });
   // Frames too: the snapshot text includes iframe content.
   const gate = await gatePageRead(snapshot, policy, view.sessionId, ask);
@@ -209,12 +213,12 @@ export async function readAriaView(
   const rendered = renderAriaView({
     snapshot,
     mode,
-    maxChars: ariaCharBudget(view.contextWindowTokens),
+    maxChars: Math.min(ariaCharBudget(view.contextWindowTokens), request.maxChars ?? Number.POSITIVE_INFINITY),
     ...(request.ref !== undefined ? { ref: request.ref } : {}),
     ...(store && key !== null ? { previous: store.get(key) } : {}),
     budgetFull: !cloud && knownWindow(view.contextWindowTokens) !== null,
   });
   if ("error" in rendered) return { kind: "error", message: rendered.error };
-  if (store && key !== null) store.set(key, { url: snapshot.url, text: snapshot.text });
+  if (store && key !== null && !snapshot.regionRef) store.set(key, { url: snapshot.url, text: snapshot.text });
   return { kind: "ok", snapshot, view: rendered };
 }

@@ -109,11 +109,14 @@ export function buildOsWebSearchTool(
     name: TOOL_NAME,
     description:
       "Search the web through the configured provider and return compact " +
-      "title/url/snippet results. Default provider is Exa (its free " +
+      "title/url/snippet results. Use when browser tools are not offered for " +
+      "this role, or the user explicitly requests a non-browser search; " +
+      "browser.search is the default otherwise. Default provider is Exa (its free " +
       "keyless tier, or an environment API key when set), with " +
       "DuckDuckGo as the fallback; SearXNG is keyless, Brave needs an " +
       "environment API key. " +
-      "Use os.web.fetch to read a chosen result page.",
+      "Read a chosen result with browser.navigate when available for this role, " +
+      "or os.web.fetch for non-browser retrieval.",
     readonly: true,
     untrustedOutput: "web search results",
     async run(rawArgs, ctx) {

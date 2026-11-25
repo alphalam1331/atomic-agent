@@ -8,6 +8,8 @@ import {
 } from "./browser-domain-policy.js";
 import { gateBrowserAction } from "./gate-browser-action.js";
 import { recheckLandedPage } from "./gate-browser-url.js";
+import { captureWorldSnapshot } from "./capture-world-snapshot.js";
+import type { AriaSnapshotStore } from "./aria-view.js";
 
 const REF_PATTERN = /^[a-zA-Z0-9]+$/;
 
@@ -20,6 +22,7 @@ export function buildBrowserTypeTool(
   backend: BrowserBackend,
   dangerous: DangerousToolOptions,
   policy: BrowserDomainPolicy = EMPTY_DOMAIN_POLICY,
+  store?: AriaSnapshotStore,
 ): ToolDefinition {
   return {
     name: "browser.type",
@@ -57,6 +60,7 @@ export function buildBrowserTypeTool(
         ctx,
       );
       if (refused) return refused;
+      ctx.signal.throwIfAborted();
       const result = await backend.type({
         ref,
         text,
@@ -67,6 +71,7 @@ export function buildBrowserTypeTool(
         const landed = await recheckLandedPage(backend, policy, "browser.type");
         if (landed) return landed;
       }
+      const worldSnapshot = await captureWorldSnapshot(backend, ctx, policy, store, true);
       return compressToolResult({
         tool: "browser.type",
         status: "ok",
@@ -75,6 +80,7 @@ export function buildBrowserTypeTool(
           ref,
           typedLength: result.typedLength,
           pressEnter,
+          ...(worldSnapshot ? { worldSnapshot } : {}),
         },
       });
     },

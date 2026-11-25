@@ -108,6 +108,8 @@ describe("runSkillScript", () => {
       OPENROUTER_API_KEY: "ato877-openrouter-key",
       ATO877_PASS_TOKEN: "ato877-passed-token",
       ATO877_PLAIN: "ato877-plain",
+      ATOMIC_AGENT_BROWSER_ENDPOINT: "http://127.0.0.1:1234/browser",
+      ATOMIC_AGENT_BROWSER_TOKEN: "private-browser-capability",
     } as const;
     const previous = new Map<string, string | undefined>();
 
@@ -133,7 +135,9 @@ describe("runSkillScript", () => {
         "process.stdout.write(JSON.stringify({" +
           "key: process.env.OPENROUTER_API_KEY ?? null," +
           "pass: process.env.ATO877_PASS_TOKEN ?? null," +
-          "plain: process.env.ATO877_PLAIN ?? null}));",
+          "plain: process.env.ATO877_PLAIN ?? null," +
+          "browserEndpoint: process.env.ATOMIC_AGENT_BROWSER_ENDPOINT ?? null," +
+          "browserToken: process.env.ATOMIC_AGENT_BROWSER_TOKEN ?? null}));",
         "utf8",
       );
       const result = await runSkillScript(skill, {
@@ -150,6 +154,8 @@ describe("runSkillScript", () => {
         key: null,
         pass: null,
         plain: "ato877-plain",
+        browserEndpoint: null,
+        browserToken: null,
       });
       // The agent's own environment is untouched.
       expect(process.env.OPENROUTER_API_KEY).toBe("ato877-openrouter-key");
@@ -160,7 +166,16 @@ describe("runSkillScript", () => {
         key: null,
         pass: "ato877-passed-token",
         plain: "ato877-plain",
+        browserEndpoint: null,
+        browserToken: null,
       });
+    });
+
+    it("never exposes the desktop browser bridge even when named in passthrough", async () => {
+      const result = await printEnv(["ATOMIC_AGENT_BROWSER_ENDPOINT", "ATOMIC_AGENT_BROWSER_TOKEN"]);
+      expect(result.browserEndpoint).toBeNull();
+      expect(result.browserToken).toBeNull();
+      expect(process.env.ATOMIC_AGENT_BROWSER_TOKEN).toBe("private-browser-capability");
     });
   });
 });

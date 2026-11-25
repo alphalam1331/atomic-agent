@@ -71,6 +71,11 @@ function voiceSupportedNow(): boolean {
 }
 
 contextBridge.exposeInMainWorld("atomic", {
+  /** Native remote browser chrome; never exposes CDP, the token or a target. */
+  browserState: () => ipcRenderer.invoke("browser:state"),
+  browserCommand: (input: Record<string, unknown>) => ipcRenderer.invoke("browser:command", input),
+  browserBounds: (input: Record<string, unknown>) => ipcRenderer.invoke("browser:bounds", input),
+  onBrowserState: (cb: (payload: unknown) => void) => on("browser:state", cb),
   /** Process supervision. */
   status: () => ipcRenderer.invoke("agent:status"),
   start: () => ipcRenderer.invoke("agent:start"),
@@ -388,6 +393,12 @@ contextBridge.exposeInMainWorld("atomic", {
   composioSaveKey: (stateDir: string, value: string) => ipcRenderer.invoke("composio:saveKey", { stateDir, value }),
   composioRemoveKey: (stateDir: string) => ipcRenderer.invoke("composio:removeKey", stateDir),
   composioCheck: (stateDir: string) => ipcRenderer.invoke("composio:check", stateDir),
+
+  /** Agent-owned IMAP/SMTP account. Passwords only cross this bridge on Save. */
+  emailStatus: () => ipcRenderer.invoke("agent:emailStatus"),
+  emailSave: (input: Record<string, unknown>) => ipcRenderer.invoke("agent:emailSave", input),
+  emailCheck: () => ipcRenderer.invoke("agent:emailCheck"),
+  emailRemove: () => ipcRenderer.invoke("agent:emailRemove"),
 
   platform: process.platform,
   /** Windows: repaint the overlaid window controls for the page's theme. */

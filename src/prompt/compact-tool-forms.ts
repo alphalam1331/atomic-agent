@@ -28,16 +28,15 @@ const RARE = "rare" as const;
 const FORMS: Record<string, CompactToolForm> = {
   "browser.navigate": {
     summary:
-      "Open a URL in the browser. Last resort: to read a page use os.web.fetch, to search use os.web.search.",
+      "Default website access in the configured browser; read_aria full/region for page text.",
   },
-  "browser.click": { summary: "Click an element by aria-ref from the latest read_aria." },
+  "browser.click": { summary: "Click an element by aria-ref from the latest page observation." },
   "browser.type": { summary: "Type into an element by aria-ref." },
   "browser.read_aria": {
     summary: "Page as an ARIA text snapshot (full, interactive, diff or region).",
   },
   "browser.search": {
-    summary: "Search in the live browser. Last resort: use os.web.search.",
-    tier: RARE,
+    summary: "Default web search in the configured browser; refreshes the world snapshot.",
   },
   "browser.tabs": { summary: "List, switch, close or open browser tabs.", tier: RARE },
   "browser.scroll": { summary: "Scroll the page; read_aria after if needed.", tier: RARE },
@@ -122,13 +121,13 @@ const FORMS: Record<string, CompactToolForm> = {
   "os.proc.list": { summary: "List processes.", tier: RARE },
   "os.proc.kill": { summary: "Signal a process (may require approval).", tier: RARE },
   "os.http.request": {
-    summary: "Raw HTTP GET/POST for APIs. To read a web page use os.web.fetch.",
+    summary: "Raw HTTP GET/POST for APIs. Read websites with browser.navigate/read_aria.",
     tier: RARE,
   },
   "os.web.search": {
-    summary: "Search the web; returns title/url/snippet. Read a result with os.web.fetch.",
+    summary: "Fallback search if browser tools are unavailable for your role or explicitly requested.",
   },
-  "os.web.fetch": { summary: "Read a web page as markdown/text (GET, no JS)." },
+  "os.web.fetch": { summary: "Fallback page text (GET, no JS) if browser tools are unavailable for your role or explicitly requested." },
   "os.clipboard.read": { summary: "Read the clipboard.", tier: RARE },
   "os.clipboard.write": { summary: "Write the clipboard.", tier: RARE },
   "os.window.list": { summary: "List windows.", tier: RARE },

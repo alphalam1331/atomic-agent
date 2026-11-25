@@ -41,8 +41,9 @@ import { lexShellLine, type ShellWord } from "./shell-line-lexer.js";
  *   `--version` / `--help` aside.
  * - The DevTools protocol (a `DevToolsActivePort` file, `/json/new` on a
  *   loopback port, `/devtools/browser/…`, `connectOverCDP`,
- *   `--remote-debugging-port`), Python's `webbrowser`, `shortcuts run`
- *   and `automator` (script runners whose steps are not visible here),
+ *   `--remote-debugging-port`), the desktop's private browser bridge (its capability variables,
+ *   or an RPC operation sent to its loopback `/browser` endpoint),
+ *   Python's `webbrowser`, `shortcuts run` and `automator` (script runners whose steps are not visible here),
  *   `defaults write` into a browser's settings, the input synthesisers
  *   (`cliclick`, `xdotool type`, `ydotool`, `wtype`), and a command
  *   decoded at run time (`base64 -d | sh`), which would carry any of
@@ -131,6 +132,10 @@ const SCRIPT_PROBLEMS: readonly ScriptProblem[] = [
 
 /** Text-level refusals that hold wherever they appear in the line. */
 const LINE_PROBLEMS: readonly ScriptProblem[] = [
+  {
+    test: /atomic_agent_browser_(?:endpoint|token)\b|(?=[\s\S]*(?:localhost|127\.0\.0\.1|\[::1\]):\d+\/browser\b)(?=[\s\S]*\boperation\b)/,
+    what: "the desktop's private browser control bridge",
+  },
   {
     test: /devtoolsactiveport|remote-debugging-(?:port|pipe|address)|(?:localhost|127\.0\.0\.1|\[::1\]|0\.0\.0\.0):\d+\/json\b|\/devtools\/(?:browser|page)\/|connectovercdp|connect_over_cdp|browserwsendpoint|chrome-remote-interface|chrome-devtools-mcp/,
     what: "the browser's DevTools connection",

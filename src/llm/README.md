@@ -18,6 +18,8 @@ This area owns inference protocols and model profiles. Read [AGENTS.md](AGENTS.m
 
 Model profiles connect prompt framing, grammar and streamed parsing. Provider adapters own transport-specific request/response formats; fallback owns per-session provider stickiness and probes. SlotManager coordinates local inference resources while runtime owns wiring. Inspect provider/openai for strict or tagged schema changes and grammar for constrained local decoding.
 
+Subscription vendor CLIs retain their existing credential/billing environment policy ([cli-child-env.ts](provider/subscription-cli/cli-child-env.ts)). The desktop browser's private endpoint/token are always removed from their child environment; browser control stays within the runtime and its guarded tools.
+
 ## Task-specific reading
 
 Read docs/profiles.md for framing/grammar and docs/fallback.md for reliability; provider/openai tests for wire/schema changes.

@@ -21,6 +21,8 @@ const AGENT_ENV: NodeJS.ProcessEnv = {
   AWS_SECRET_ACCESS_KEY: "leak-aws",
   PGPASSWORD: "leak-pg",
   STRIPE_KEY: "leak-stripe",
+  ATOMIC_AGENT_BROWSER_ENDPOINT: "http://127.0.0.1:1234/browser",
+  ATOMIC_AGENT_BROWSER_TOKEN: "private-browser-capability",
 };
 
 describe("buildCommandEnv (ATO-347)", () => {
@@ -55,6 +57,17 @@ describe("buildCommandEnv (ATO-347)", () => {
     const base = { ...AGENT_ENV };
     buildCommandEnv(base);
     expect(base).toEqual(AGENT_ENV);
+  });
+
+  it("never inherits private browser capabilities, including explicit and mixed-case passthrough", () => {
+    const env = buildCommandEnv({
+      ...AGENT_ENV,
+      atomic_agent_browser_token: "lowercase-private-capability",
+    }, ["ATOMIC_AGENT_BROWSER_ENDPOINT", "atomic_agent_browser_token", "GITHUB_TOKEN"]);
+    expect(env).not.toHaveProperty("ATOMIC_AGENT_BROWSER_ENDPOINT");
+    expect(env).not.toHaveProperty("ATOMIC_AGENT_BROWSER_TOKEN");
+    expect(env).not.toHaveProperty("atomic_agent_browser_token");
+    expect(env.GITHUB_TOKEN).toBe("leak-github");
   });
 });
 

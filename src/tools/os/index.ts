@@ -26,7 +26,7 @@ import { buildOsWebFetchTool } from "./web/web-fetch.js";
 import { buildOsWebSearchTool, type WebSearchKeyHelp } from "./web-search/index.js";
 import { osClipboardReadTool, osClipboardWriteTool } from "./clipboard.js";
 import { osWindowListTool, osWindowFocusTool } from "./window.js";
-import { buildOsEmailInboxTool, buildOsEmailSendTool } from "./email.js";
+import { buildOsEmailInboxTool, buildOsEmailSendTool, type OsEmailToolOptions } from "./email.js";
 import { osNotifyTool } from "./notify.js";
 import { osFsHashTool } from "./fs/fs-hash.js";
 import { osFsDiffTool } from "./fs/fs-diff.js";
@@ -139,6 +139,8 @@ export type {
 } from "./shell/shell-jobs.js";
 
 export interface RegisterOsToolsOptions extends DangerousToolOptions {
+  /** Runtime-owned mail identity; settings changes apply on restart. */
+  email?: OsEmailToolOptions["email"];
   config: Pick<AtomicAgentConfig, "http" | "web" | "projects" | "tools">;
   /**
    * Column-only recent-session projection for `os.fs.locate_project`
@@ -285,12 +287,14 @@ export function registerOsTools(
     buildOsEmailInboxTool({
       approvals: options.approvals,
       approvalRequired: options.approvalRequired,
+      email: options.email,
     }),
   );
   registry.register(
     buildOsEmailSendTool({
       approvals: options.approvals,
       approvalRequired: options.approvalRequired,
+      email: options.email,
     }),
   );
   registry.register(osFsHashTool);

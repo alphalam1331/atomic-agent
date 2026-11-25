@@ -68,6 +68,7 @@ export const CORE_TOOL_NAMES: ReadonlySet<string> = new Set([
   "fusion.delegate",
   "vision.describe",
   "browser.navigate",
+  "browser.search",
   "browser.read_aria",
   "browser.click",
   "browser.type",

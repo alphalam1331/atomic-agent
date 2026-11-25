@@ -112,7 +112,9 @@ export function buildOsWebFetchTool(
   return {
     name: TOOL_NAME,
     description:
-      "Read a web page as readable markdown/text. Fetches via curl and " +
+      "Read a web page directly as markdown/text when browser tools are not " +
+      "offered for this role, or the user explicitly requests non-browser " +
+      "retrieval. browser.navigate is the default for website access otherwise. Fetches via curl and " +
       "extracts content: prefers Cloudflare 'Markdown for Agents' " +
       "(Accept: text/markdown), then Mozilla Readability, then a basic " +
       "tag-stripping fallback. GET only, no auth headers, no JavaScript " +

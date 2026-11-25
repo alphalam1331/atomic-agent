@@ -10,6 +10,7 @@ This area owns http and openai-compatible ingress. Read [AGENTS.md](AGENTS.md) b
 - [http-server.ts](http-server.ts)
 - [route-sessions.ts](route-sessions.ts)
 - [route-mcp.ts](route-mcp.ts)
+- [route-email.ts](route-email.ts)
 - [request-context.ts](request-context.ts)
 - [openai-completions-cancel.ts](openai-completions-cancel.ts)
 
@@ -18,6 +19,15 @@ This area owns http and openai-compatible ingress. Read [AGENTS.md](AGENTS.md) b
 The HTTP server owns request handling and connection cancellation; route modules translate transport payloads into runtime operations. Session routes use the existing turn/steering contract, and webhook routes materialize durable tasks. Runtime owns session execution, task storage and approval policy; routes must retain authentication and error mapping. MCP routes use [shared server-config commands](../config/mcp-server-commands.ts) and manager operations, independently of TUI.
 
 ## Task-specific reading
+
+[Email account routes](route-email.ts): authenticated `GET /api/email` returns
+the saved IMAP/SMTP settings and password-presence flags. `PUT /api/email`
+accepts `{ config, imapPassword?, smtpPassword? }`; omitted or empty passwords
+retain saved values. `DELETE /api/email` removes this connection and its local
+credentials. Changes require idle turns and the desktop offers a runtime restart.
+`POST /api/email/check` verifies the saved IMAP and SMTP logins without sending
+a message and cancels connections when the client disconnects. No response
+contains credentials; account responses use `cache-control: no-store`.
 
 Read README.md and ../runtime/docs/lifecycle.md for session/stream/steering changes.
 

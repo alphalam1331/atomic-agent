@@ -95,6 +95,25 @@ describe("browser.read_aria views", () => {
     await expect(tool.run({ mode: "bogus" }, GATE_CTX)).rejects.toThrow(/mode/);
   });
 
+  it("region asks for the locator subtree and leaves whole-page diff history intact", async () => {
+    const backend = new PageBackend();
+    const store = new AriaSnapshotStore();
+    let requestedRef: string | undefined;
+    backend.snapshot = async (options: { ref?: string; full?: boolean } = {}) => {
+      requestedRef = options.ref;
+      const text = `url: ${backend.url}\ntitle: Shop\n\n${options.ref ? '- button "Add to cart" [ref=e3]' : TREE}`;
+      return { url: backend.url, title: "Shop", text, digest: "d", refs: ["e1", "e3"], ...(options.ref ? { regionRef: options.ref } : {}) };
+    };
+    await readAriaView(backend, { mode: "interactive" }, { sessionId: "s" }, undefined, store);
+    const region = await readAriaView(backend, { mode: "region", ref: "e3" }, { sessionId: "s" }, undefined, store);
+    expect(requestedRef).toBe("e3");
+    expect(region.kind).toBe("ok");
+    const diff = await readAriaView(backend, { mode: "diff" }, { sessionId: "s" }, undefined, store);
+    if (diff.kind !== "ok") throw new Error(diff.kind);
+    expect(diff.view.text).not.toContain("+ [e1]");
+    expect(diff.view.text).toContain("no changes since the previous snapshot");
+  });
+
   it("a blocked page renders no view and is not remembered", async () => {
     const backend = new PageBackend();
     backend.url = "https://bank.example/";

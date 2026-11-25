@@ -185,10 +185,13 @@ export class PlaywrightBackend implements BrowserBackend {
     return page.url();
   }
 
-  async snapshot(options: { depth?: number; full?: boolean } = {}): Promise<AriaSnapshot> {
+  async snapshot(options: { depth?: number; full?: boolean; ref?: string } = {}): Promise<AriaSnapshot> {
     const page = await this.requireActivePage();
-    const bodyLocator = page.locator("body");
-    const raw = await bodyLocator.ariaSnapshot({
+    const locator = options.ref ? page.locator(`aria-ref=${options.ref}`).first() : page.locator("body");
+    if (options.ref && (await locator.count()) === 0) {
+      throw new Error(`ref '${options.ref}' is not on the current page — call browser.read_aria for fresh refs`);
+    }
+    const raw = await locator.ariaSnapshot({
       mode: "ai",
       ...(options.depth !== undefined ? { depth: options.depth } : {}),
     } as never);
@@ -204,6 +207,7 @@ export class PlaywrightBackend implements BrowserBackend {
       digest: summary.digest,
       refs: summary.refs,
       frameUrls: page.frames().map((frame) => frame.url()),
+      ...(options.ref ? { regionRef: options.ref } : {}),
     };
   }
 

@@ -35,6 +35,18 @@ describe("cliChildEnv", () => {
     expect(cliChildEnv(undefined, base)).toBe(base);
     expect(cliChildEnv([], base)).toBe(base);
   });
+
+  it.each([undefined, [], ["OPENAI_API_KEY"]])("never gives a vendor CLI private browser control when billing strips are %j", (strip) => {
+    const base = {
+      PATH: "/usr/bin",
+      CLAUDE_CODE_OAUTH_TOKEN: "subscription-login",
+      ATOMIC_AGENT_BROWSER_TOKEN: "private-browser-capability",
+      Atomic_Agent_Browser_Endpoint: "http://127.0.0.1:1234/browser",
+    };
+    expect(cliChildEnv(strip, base)).toEqual({ PATH: "/usr/bin", CLAUDE_CODE_OAUTH_TOKEN: "subscription-login" });
+    expect(base.ATOMIC_AGENT_BROWSER_TOKEN).toBe("private-browser-capability");
+    expect(base.Atomic_Agent_Browser_Endpoint).toBe("http://127.0.0.1:1234/browser");
+  });
 });
 
 describe("billingEnvKeys", () => {

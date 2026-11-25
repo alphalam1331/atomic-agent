@@ -1,0 +1,27 @@
+#browserpane{position:relative;flex:0 1 50%;width:50%;min-width:320px;min-height:0;display:flex;flex-direction:column;
+  margin:0 8px 8px 0;background:var(--lift);border:1px solid var(--divider);border-radius:var(--r-panel);overflow:hidden;color:var(--ink)}
+#browserpane[hidden]{display:none}
+#browserpane button{flex:none;min-width:26px;height:28px;padding:0 7px;border:0;border-radius:6px;background:transparent;color:var(--ink-2);cursor:pointer;font:500 var(--fs-label)/1 var(--font-ui)}
+#browserpane button:hover{background:var(--hover);color:var(--ink)}
+#browserpane button:disabled{opacity:.35;cursor:default}
+#browserpane button:focus-visible,#browser-address:focus-visible{outline:2px solid var(--brand);outline-offset:-2px}
+.bp-heading{display:flex;align-items:center;gap:8px;padding:6px 8px 4px 12px;font:500 var(--fs-cap)/20px var(--font-ui)}
+.bp-heading span{flex:1;color:var(--ink-3);font-size:var(--fs-micro)}
+.bp-tabs{display:flex;gap:4px;padding:0 8px 6px;overflow-x:auto;flex:none;border-bottom:1px solid var(--divider)}
+.bp-tab{display:flex;min-width:70px;max-width:170px;border-radius:6px;background:var(--well);flex:none}
+.bp-tab.active{background:var(--brand-wash)}
+#browserpane .bp-tab [role=tab]{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left}
+#browserpane .bp-tab [data-browser=close]{padding:0 4px;min-width:22px}
+.bp-nav{display:flex;align-items:center;gap:2px;padding:6px;flex:none}
+#browser-address{flex:1;min-width:0;height:30px;border:1px solid var(--divider);border-radius:7px;background:var(--well);color:var(--ink);padding:0 8px;font:400 var(--fs-label)/1 var(--font-ui)}
+.bp-control{display:flex;align-items:center;gap:8px;padding:5px 8px 5px 12px;border-bottom:1px solid var(--divider);background:var(--well);font:400 var(--fs-micro)/16px var(--font-ui);flex:none}
+.bp-control span{flex:1;min-width:0;color:var(--ink-2)}
+.bp-control.manual{background:var(--warn-wash)}
+#browserpane .bp-control button{background:var(--brand);color:var(--on-strong)}
+.bp-error{padding:8px 12px;color:var(--danger);font:400 var(--fs-label)/18px var(--font-ui);flex:none}
+.bp-error[hidden]{display:none}
+#browser-viewport{position:relative;flex:1;min-height:0;background:#fff}
+.bp-empty{padding:32px 20px;text-align:center;color:#5b616c;font:400 var(--fs-cap)/20px var(--font-ui)}
+body:has(#browserpane:not([hidden])) #content{min-width:280px}
+body:has(#browserpane:not([hidden])) #inspector{display:none}
+body:has(#browserpane:not([hidden])) #fpreview{display:none}

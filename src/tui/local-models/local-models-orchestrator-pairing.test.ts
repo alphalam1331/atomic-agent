@@ -368,6 +368,7 @@ describe("LocalModelsOrchestrator embedding pairing", () => {
     stubBackendInstalled(dataDir);
     stubChatModelDownloaded(dataDir);
     const file = readUserConfigFileSync(getUserConfigPath(stateDir));
+    if (!file) throw new Error("Expected the isolated test config to exist");
     writeUserConfigFileSync(getUserConfigPath(stateDir), {
       ...file,
       llm: {

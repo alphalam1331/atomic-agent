@@ -35,6 +35,7 @@ function autoApprove(): DangerousToolOptions {
 }
 
 class FakeBackend implements BrowserBackend {
+  withSignal?: BrowserBackend["withSignal"];
   public readyCalls = 0;
   public shutdowns = 0;
   public lastNavigate: NavigateInput | null = null;
@@ -236,6 +237,55 @@ describe("browser tools on a fake backend", () => {
     const result = await tool.run({ ref: "e1" }, CTX);
     expect(result.status).toBe("ok");
     expect(backend.lastClick?.ref).toBe("e1");
+    expect(result.details.worldSnapshot).toMatchObject({ kind: "browser", text: expect.stringContaining("view: interactive") });
+  });
+
+  it("click and type refresh the world with bounded interactive feedback, even for cloud", async () => {
+    let version = "Before";
+    backend.snapshot = async () => ({
+      url: "https://example.com/", title: "Example", digest: "d", refs: ["e1"],
+      text: `url: https://example.com/\ntitle: Example\n\n- button "${version}" [ref=e1]\n${Array.from({ length: 500 }, (_, i) => `- button "Other ${i}" [ref=x${i}]`).join("\n")}\n- paragraph: hidden prose`,
+    });
+    backend.click = async ({ ref }) => { version = "After click"; return { clickedRef: ref }; };
+    backend.type = async ({ text }) => { version = "After type"; return { typedLength: text.length }; };
+    for (const [tool, args, expected] of [
+      [buildBrowserClickTool(backend, autoApprove()), { ref: "e1" }, "After click"],
+      [buildBrowserTypeTool(backend, autoApprove()), { ref: "e2", text: "hello" }, "After type"],
+    ] as const) {
+      const result = await tool.run(args, { ...CTX, modelMode: "cloud", contextWindowTokens: 200_000 });
+      const snapshot = result.details.worldSnapshot as { text: string };
+      expect(snapshot.text).toContain(expected);
+      expect(snapshot.text).not.toContain("hidden prose");
+      expect(snapshot.text.length).toBeLessThan(8_400);
+      expect(result.summary).not.toContain("[e1]");
+    }
+  });
+
+  it("successful click/type survives an unavailable post-action snapshot", async () => {
+    backend.snapshot = async () => { throw new Error("page navigated during read"); };
+    const clicked = await buildBrowserClickTool(backend, autoApprove()).run({ ref: "e1" }, CTX);
+    const typed = await buildBrowserTypeTool(backend, autoApprove()).run({ ref: "e2", text: "x" }, CTX);
+    expect(clicked.status).toBe("ok");
+    expect(typed.status).toBe("ok");
+    expect(clicked.details.worldSnapshot).toBeUndefined();
+    expect(typed.details.worldSnapshot).toBeUndefined();
+  });
+
+  it("runs the complete tool through the backend cancellation scope and refuses an aborted call", async () => {
+    const controller = new AbortController();
+    let scopes = 0;
+    backend.withSignal = async (signal, operation) => {
+      expect(signal).toBe(controller.signal);
+      scopes += 1;
+      return operation();
+    };
+    const click = buildBrowserTools(backend, autoApprove()).find((tool) => tool.name === "browser.click")!;
+    await click.run({ ref: "e1" }, { ...CTX, signal: controller.signal });
+    expect(scopes).toBe(1);
+    backend.lastClick = null;
+    controller.abort();
+    await expect(click.run({ ref: "e1" }, { ...CTX, signal: controller.signal })).rejects.toMatchObject({ name: "AbortError" });
+    expect(backend.lastClick).toBeNull();
   });
 
   it("click rejects non-alphanumeric ref", async () => {

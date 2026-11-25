@@ -91,6 +91,11 @@ reached with the pointer is reported as the finding it is.
 
 ## The live smoke tier
 
+`L16-embedded-browser.mjs` drives the actual Browser pane and runtime tools through
+navigation, a gated commit click, takeover/resume, tabs, address entry, Back/Forward
+and Settings. The separate disposable native harness exercises isolation, profile
+persistence, iframe geometry and masking; see [embedded browser verification](../docs/embedded-browser.md).
+
 `test/live/` runs the real Electron window, the real `atag serve` built from
 this checkout, the real tools, real clicks and real files on disk. Only the
 model is replaced: `live/scripted-model.mjs` is a loopback llama-server whose

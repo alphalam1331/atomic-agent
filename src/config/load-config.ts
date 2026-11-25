@@ -664,6 +664,12 @@ export function loadConfig(): AtomicAgentConfig {
       ownerVerifiedAt: user.atomicMail.ownerVerifiedAt,
       pendingVerification: user.atomicMail.pendingVerification,
     },
+    email: {
+      enabled: user.email.enabled,
+      address: user.email.address,
+      imap: { ...user.email.imap },
+      smtp: { ...user.email.smtp },
+    },
     git: {
       remoteSync: user.git.remoteSync,
     },

@@ -15,7 +15,11 @@
  * a secret (`isSecretEnvName`) or is a known provider/bot credential
  * (`KNOWN_SECRET_ENV_VARS`). Everything else passes unchanged.
  *
- * Two ways back in, both explicit:
+ * The desktop browser bridge's endpoint and token are private capabilities,
+ * always removed even from passthrough. A child calling that bridge directly
+ * would skip the browser tools' approval and domain checks.
+ *
+ * Two ways back in for other variables, both explicit:
  * - `passthrough` names (`tools.shell.envPassthrough` in config) are
  *   copied from the agent's env even when they look like a secret;
  * - a command line that sets a variable itself (`FOO_TOKEN=x cmd`) is
@@ -79,6 +83,12 @@ export const KNOWN_SECRET_ENV_VARS: readonly string[] = [
 ];
 
 const KNOWN = new Set(KNOWN_SECRET_ENV_VARS.map((name) => name.toUpperCase()));
+
+/** A browser control capability is not a credential for an agent-run command. */
+const PRIVATE_BROWSER_ENV_VARS = new Set([
+  "ATOMIC_AGENT_BROWSER_ENDPOINT",
+  "ATOMIC_AGENT_BROWSER_TOKEN",
+]);
 
 /**
  * Substrings that mark a secret wherever they sit in the name
@@ -145,7 +155,8 @@ export function isSecretEnvName(name: string): boolean {
 
 /**
  * Build the child environment for an agent-run command: `base` without
- * secret-looking variables, except those named in `passthrough`.
+ * secret-looking variables, except those named in `passthrough`. The private
+ * desktop browser bridge is always omitted; passthrough cannot expose it.
  */
 export function buildCommandEnv(
   base: NodeJS.ProcessEnv = process.env,
@@ -155,7 +166,9 @@ export function buildCommandEnv(
   const env: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(base)) {
     if (typeof value !== "string") continue;
-    if (isSecretEnvName(key) && !allowed.has(key.toUpperCase())) continue;
+    const upper = key.toUpperCase();
+    if (PRIVATE_BROWSER_ENV_VARS.has(upper)) continue;
+    if (isSecretEnvName(key) && !allowed.has(upper)) continue;
     env[key] = value;
   }
   return env;

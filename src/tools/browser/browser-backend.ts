@@ -22,6 +22,8 @@ export interface AriaSnapshot {
    * content (cross-origin too), so the domain lists check these as well.
    */
   frameUrls?: string[];
+  /** Only this ref's subtree was captured, rather than the whole page. */
+  regionRef?: string;
 }
 
 export interface TabInfo {
@@ -157,7 +159,11 @@ export interface BrowserBackend {
   /** Tear down (close the persistent context / disconnect CDP). */
   shutdown(): Promise<void>;
 
-  snapshot(options?: { depth?: number; full?: boolean }): Promise<AriaSnapshot>;
+  /** Optional transport cancellation / ownership scope for one complete tool call. */
+  withSignal?<T>(signal: AbortSignal, operation: () => Promise<T>): Promise<T>;
+
+  /** `ref` captures just that locator's subtree; frameUrls still describes the whole page. */
+  snapshot(options?: { depth?: number; full?: boolean; ref?: string }): Promise<AriaSnapshot>;
   /**
    * Cheap synchronous-ish check: does the current DOM carry an
    * `aria-ref=<ref>` attribute? Used by tools that act on refs (click,

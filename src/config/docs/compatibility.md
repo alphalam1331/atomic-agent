@@ -109,6 +109,8 @@ Discord's present owner list wins over the legacy scalar regardless of file vers
 
 ## Writes and credentials
 
+`email` is additive and unversioned. Older files without it load with the mailbox disabled and empty address/hosts/usernames; existing Atomic Mail settings remain separate. Disabled accounts may save incomplete settings, but supplied values still validate. Enabling requires a single email address and separate IMAP/SMTP host and username values. Ports are 1–65535 and security is `tls` or required `starttls`; passwords are separate state-directory `.env` credentials, never schema fields.
+
 Preserve validation of provider/model pins and run mode. Writes that change user config must reset the cache as required by the existing API. Credential storage uses owner-only files and platform-specific ACL handling: `.env` and `config.json` are 0600 on POSIX, and on Windows both get a current-user-only ACL through [windows-acl.ts](../windows-acl.ts) (best effort; a failure leaves the inherited ACL and never fails the write). Missing optional credentials and required credentials have different behavior.
 
 ## Keys from a newer build

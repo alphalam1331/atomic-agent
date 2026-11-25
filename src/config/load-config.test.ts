@@ -64,6 +64,17 @@ describe("loadConfig", () => {
     expect(written.agent.sessionSectionsMaxTokens).toBe(0);
   });
 
+  it("loads the operator's IMAP/SMTP settings without adding credentials to runtime config", () => {
+    const email = {
+      enabled: true,
+      address: "agent@example.com",
+      imap: { host: "imap.example.com", port: 993, security: "tls" as const, username: "imap-user" },
+      smtp: { host: "smtp.example.com", port: 587, security: "starttls" as const, username: "smtp-user" },
+    };
+    writeUserConfigFileSync(getUserConfigPath(stateDir), { ...USER_CONFIG_DEFAULTS, email });
+    expect(loadConfig().email).toEqual(email);
+  });
+
   /**
    * File-only, exactly like `worldSnapshotMaxTokens` and
    * `conversationMaxTokens`: the prompt-section caps are a config-file

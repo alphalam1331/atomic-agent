@@ -128,12 +128,23 @@ export function buildBrowserTools(
   const store = new AriaSnapshotStore();
   return [
     buildBrowserNavigateTool(backend, dangerous, policy, store),
-    buildBrowserClickTool(backend, dangerous, policy),
-    buildBrowserTypeTool(backend, dangerous, policy),
+    buildBrowserClickTool(backend, dangerous, policy, store),
+    buildBrowserTypeTool(backend, dangerous, policy, store),
     buildBrowserReadAriaTool(backend, policy, store, dangerous),
     buildBrowserSearchTool(backend, dangerous, policy, store),
     buildBrowserTabsTool(backend, dangerous, policy),
     buildBrowserScrollTool(backend),
     buildBrowserScreenshotTool(backend, policy, undefined, dangerous),
-  ];
+  ].map((tool) => ({
+    ...tool,
+    async run(args, ctx) {
+      const operation = async () => {
+        ctx.signal.throwIfAborted();
+        const result = await tool.run(args, ctx);
+        ctx.signal.throwIfAborted();
+        return result;
+      };
+      return backend.withSignal ? backend.withSignal(ctx.signal, operation) : operation();
+    },
+  }));
 }

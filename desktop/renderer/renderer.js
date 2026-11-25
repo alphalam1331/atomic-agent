@@ -1155,7 +1155,7 @@ const MENU_ACTS = {
 };
 /* Calm (S5): Settings is ordinary app preferences. Nine sections, in a
    fixed order; a section shows one pane, except Connections, which holds
-   three (MCP servers, Telegram and Composio) behind a segmented control in
+   four (MCP servers, Telegram, Composio and Email) behind a segmented control in
    its header.
    The pane ids are the ones the rest of the file already keys on (the TUI's
    MANAGE_TABS, plus `general` and `diagnostics`), so every pane's own state,
@@ -1163,7 +1163,7 @@ const MENU_ACTS = {
 const SETTINGS_SECTIONS = [
   ['general','General','sliders',['general']],
   ['models','Models','cpu',['llm']],
-  ['connections','Connections','plug',['mcp','telegram','composio']],
+  ['connections','Connections','plug',['mcp','telegram','composio','email']],
   ['memory','Memory','memory',['memory']],
   ['tasks','Tasks','tasks',['tasks']],
   ['skills','Skills','skills',['skills']],
@@ -1174,7 +1174,7 @@ const SETTINGS_SECTIONS = [
   ['diagnostics','Diagnostics','gauge',['diagnostics']],
 ];
 /* Every pane, in nav order: [pane id, the name it goes by]. */
-const SETTINGS_TABS = [['general','General'],['llm','Models'],['mcp','MCP servers'],['telegram','Telegram'],['composio','Composio'],['memory','Memory'],
+const SETTINGS_TABS = [['general','General'],['llm','Models'],['mcp','MCP servers'],['telegram','Telegram'],['composio','Composio'],['email','Email'],['memory','Memory'],
                        ['tasks','Tasks'],['skills','Skills'],['plugins','Plugins'],['privacy','Privacy'],['import','Import'],['diagnostics','Diagnostics']];
 /* The section Settings reopens on (sidebar button, ⌘ ,, Escape): the last
    one shown, per viewer, like atag.theme; General the first time. */
@@ -1414,6 +1414,16 @@ const CMP = {
   message:null, msgGen:0, warning:null, warnGen:0, lastError:null, owedGen:null,
   checkError:null, checkGen:0, // the last failed Check again, for this agent generation only
 };
+const EMAIL = createEmailPane({
+  read: () => BR && BR.emailStatus ? BR.emailStatus() : Promise.resolve({ok:false, error:'Update the agent and desktop app to configure email.'}),
+  save: (body) => BR.emailSave(body),
+  check: () => BR.emailCheck(),
+  remove: () => BR.emailRemove(),
+  changed: () => {
+    if (!S.settings || settingsPaneId(S.settingsPane) !== 'email') return;
+    paneRepaintKeepFocus(emailTab(), emailPasswordsRestore);
+  },
+});
 /* ATO-328: the Exa key card under a web search call and its Settings field
    (exa-key.js). `has`: EXA_API_KEY is in <stateDir>/.env or this app's
    environment (names only, never the value), null until read. `draft`: what
@@ -1937,6 +1947,7 @@ const PAL = [
     ['plug','MCP servers','Settings · Connections','/mcp','settings:mcp'],
     ['send','Telegram','Settings · Connections','/telegram','settings:telegram'],
     ['link','Composio','Settings · Connections','','settings:composio'],
+    ['send','Email','Settings · Connections','','settings:email'],
     ['memory','Memory','Settings','⌘ 4','settings:memory'],
     ['tasks','Tasks','Settings','','settings:tasks'],
     ['skills','Skills','Settings','','settings:skills'],
@@ -2235,6 +2246,7 @@ function render() {
   // keeps clear of, so it is painted once both are in place.
   renderDlcard();
   renderOverlays(); renderSettings(); renderToasts();
+  if (typeof browserPaneBoot === 'function') { browserPaneBoot(); browserPaneSchedule(); }
   /* Item 11: a queued ⇄ runs on the paint after the last thing holding it
      goes — a switch, a turn, an approval — whichever path cleared it. */
   fzFlushSoon();
@@ -2281,6 +2293,8 @@ function renderToolbar() {
     + (open ? '' : sidebarToggleHTML() + searchBtnHTML())
     + (t ? '<div class="tb-title"><b title="' + esc(t) + '">' + esc(t) + '</b></div>' : '')
     + '<div class="tb-right">'
+      + (BR && BR.browserState ? '<button class="iconbtn' + (browserPaneOpen() ? ' on' : '') + '" data-act="browser:toggle"'
+        + ' aria-pressed="' + browserPaneOpen() + '" title="Browser" aria-label="Browser">' + ic('globe') + '</button>' : '')
       /* ATO-1256: this chat's files in the panel beside it (chat-files.js, file-preview.js). */
       + (S.room === 'chat' ? '<button class="iconbtn' + (filesPanelOpen() ? ' on' : '') + '" data-act="toggle:files"'
         + ' aria-pressed="' + filesPanelOpen() + '"'
@@ -5522,6 +5536,7 @@ function sheet(title, body, foot, cls) {
 /* r6 cloud item 5: which pane the remembered scroll offset belongs to. */
 const SETTINGS_SCROLL = { pane: null };
 function renderSettings() {
+  if (!S.settings || settingsPaneId(S.settingsPane) !== 'email') EMAIL.close();
   const old = $('#settings');
   /* The rebuild below replaces every control, and a press released on a new
      node is not a click: a repaint landing mid-press swallowed it (a plugin
@@ -5579,6 +5594,7 @@ function renderSettings() {
   $('#window').appendChild(el);
   // Composio: a half-typed key goes back into its field (the markup carries it empty) before the focus and caret do.
   composioKeyRestore();
+  emailPasswordsRestore();
   // Item 36: back where the nav was; on a new section or a fresh opening, its row is brought into view.
   const menu = el.querySelector('.setmenu');
   if (menu) {
@@ -5945,6 +5961,7 @@ function settingsPaneEntered(opened) {
   else if (pane === 'llm') llmTabEntered();
   else if (pane === 'telegram') telegramTabEntered();
   else if (pane === 'composio') composioTabEntered();
+  else if (pane === 'email') EMAIL.enter();
   else if (pane === 'import') importTabEntered();
   // ATO-720: the Model row reads `models status`; ask once on entry when the route uses a local model server.
   else if (pane === 'diagnostics' && BR && (engfRouteLocal() || selBackend() === 'custom')) llmRefreshStatus(true).then(diagRepaint);
@@ -5968,6 +5985,7 @@ function settingsPane() {
   if (p === 'llm') return llmTab();
   if (p === 'telegram') return telegramTab();
   if (p === 'composio') return composioTab();
+  if (p === 'email') return emailTab();
   if (p === 'import') return importTab();
   return comingNote(SETTINGS_TABS.find((t) => t[0] === p)[1]);
 }
@@ -6741,6 +6759,7 @@ function helpReport() {
 }
 
 function act(a) {
+  if (a === 'browser:toggle') { void browserPaneToggle(); return; }
   if (!a) return;
   /* Item 7 lane fix, found by the suite rather than by a spec: `split(':')`
      took only the FIRST segment as the value, and this agent's own session
@@ -6990,6 +7009,7 @@ function act(a) {
   if (k === 'llm') { close(); llmAct(a.slice(4)); return; }
   if (k === 'telegram') { close(); telegramAct(a.slice(9)); return; }
   if (k === 'composio') { close(); composioAct(a.slice(9)); return; }
+  if (k === 'email') { close(); EMAIL.action(a.slice(6), AGENT_GEN); return; }
   // ATO-328: Save on the Exa key card or its Settings row. No close(): the card is in the chat, the row in Settings.
   if (k === 'exakey') { exaKeyAct(v); return; }
   // ATO-577 / ATO-579: Diagnostics' Doctor and Data buttons (doctor-data.js).
@@ -8051,6 +8071,7 @@ document.addEventListener('input', (e) => {
   if (e.target.id === 'llm-url') { LLMP.externalDraft = e.target.value; if (LLMP.externalInvalid) { LLMP.externalInvalid = false; llmRepaint(); const n = $('#llm-url'); if (n) { n.focus(); n.setSelectionRange(n.value.length, n.value.length); } } return; }
   if (e.target.id === 'tg-token') { if (TG.token.error) { TG.token.error = null; } return; }
   // Composio: the key field keeps its draft in memory only (composioKeyRestore puts it back after a repaint).
+  if (e.target.dataset && e.target.dataset.emailField) { EMAIL.input(e.target.dataset.emailField, e.target.value); return; }
   if (e.target.id === 'cmp-key') { CMP.draft = e.target.value; if (CMP.keyError) CMP.keyError = null; return; }
   // ATO-328: the Exa key fields keep their draft in memory only (exaKeyRestore puts it back after a repaint).
   if (e.target.dataset && e.target.dataset.exaKey) { EXA.draft[e.target.dataset.exaKey] = e.target.value; return; }
@@ -23794,6 +23815,8 @@ function settingsKey(e, k, inText) {
   if (pane === 'telegram' && telegramKey(e, k, inText)) return true;
   if (pane === 'composio' && composioKey(e, k, inText)) return true;
   if (pane === 'import' && importKey(e, k, inText)) return true;
+  // Encryption selects own their arrow keys, so they cannot switch panes.
+  if (pane === 'email' && e.target && e.target.tagName === 'SELECT' && k !== 'Escape') return false;
   if (k === 'Escape') { e.preventDefault(); S.settings = null; render(); return true; }
   if (inText) return false;
   if (e.metaKey || e.ctrlKey || e.altKey) return false;
@@ -23972,13 +23995,14 @@ function paneFocusRestore(box, keep) {
 /* Repaint a pane in place. With nothing focused in it, a whole render() (which
    keeps the pane's scroll, renderSettings); with something focused, the pane
    alone, its scroll, the focus and a field's caret kept. */
-function paneRepaintKeepFocus(html) {
+function paneRepaintKeepFocus(html, restoreFields) {
   const box = paneBox();
   if (!box) { render(); return; }
   const keep = paneFocusKeep(box);
   if (!keep) { render(); return; }
   const top = box.scrollTop;
   box.innerHTML = html;
+  if (restoreFields) restoreFields();
   settingsStatusRepaint();
   box.scrollTop = top;
   paneFocusRestore(box, keep);
@@ -29033,6 +29057,22 @@ function composioKey(e, k, inText) {
   if (map[k] && cmpHasKey() === true) { e.preventDefault(); composioAct(map[k]); return true; }
   return false;
 }
+
+/* Provider-independent account settings; passwords remain in EMAIL's in-memory
+   draft and are restored as DOM properties after every settings repaint. */
+function emailTab() {
+  return emailPaneHTML(Object.assign({}, EMAIL.state, {
+    restartOwed:EMAIL.state.owedGen !== null && EMAIL.state.owedGen === AGENT_GEN,
+    running:!!S.busy || RUNNING.size > 0,
+  }), {esc, ic});
+}
+function emailPasswordsRestore() {
+  const pane = document.querySelector('.sd-email');
+  if (pane) emailRestorePasswords(EMAIL.state, pane);
+}
+document.addEventListener('change', (e) => {
+  if (e.target.dataset && e.target.dataset.emailField) EMAIL.input(e.target.dataset.emailField, e.target.value);
+});
 
 /* ---------------- Import tab (import-panel.tsx, import-panel-state.ts, import-key-bindings.ts,
    import-orchestrator.ts). The run is `atag import <hermes|openclaw> … --dry-run|--yes` (the

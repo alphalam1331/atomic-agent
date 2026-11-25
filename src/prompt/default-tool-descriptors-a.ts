@@ -19,7 +19,7 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
   {
     name: "browser.navigate",
     summary:
-      "Open a URL in the controlled browser tab. LAST RESORT — do NOT use this to read a page (use os.web.fetch) or to search (use os.web.search). Allowed ONLY when the user explicitly asks for the browser, or the page truly needs JS/login/clicks that os.web.fetch cannot deliver.",
+      "Default way to open a website in the configured browser (the built-in desktop Browser pane when connected). Refreshes the world snapshot; use browser.read_aria full/region when you need page text.",
     argsSchema: "{ url: string }",
   },
   {
@@ -41,7 +41,7 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
   {
     name: "browser.search",
     summary:
-      "Web search in the live browser (opens the SERP, refreshes the world snapshot). LAST RESORT — to search the web use os.web.search instead. Allowed ONLY when the user explicitly asks to search via the browser, or you must then click/read the live results.",
+      "Default web search in the configured browser (the built-in desktop Browser pane when connected). Opens the search results and refreshes the world snapshot; follow results with browser.click or browser.navigate.",
     argsSchema: "{ query: string, engine?: string }",
   },
   {
@@ -300,14 +300,14 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
   {
     name: "os.http.request",
     summary:
-      "Raw HTTP GET/POST via curl for APIs/JSON; returns the body verbatim (no HTML extraction). Host allowlist + approval from config.http. To read a web page, use os.web.fetch.",
+      "Raw HTTP GET/POST via curl for APIs/JSON; returns the body verbatim (no HTML extraction). Host allowlist + approval from config.http. For websites, use browser.navigate and browser.read_aria.",
     argsSchema:
       "{ url: string, method?: 'GET' | 'POST', headers?: Record<string, string>, body?: string | object, timeoutMs?: number, followRedirects?: boolean }",
   },
   {
     name: "os.web.search",
     summary:
-      "Search the web via the configured provider (Exa by default with a DuckDuckGo fallback; SearXNG/Brave configurable; Exa/Brave can use env API keys). Returns compact title/url/snippet results. Use os.web.fetch to read a chosen result.",
+      "Fallback web search when browser tools are unavailable for your role or the user explicitly requests this provider. Returns compact title/url/snippet results via the configured provider (Exa with DuckDuckGo fallback; SearXNG/Brave configurable). Otherwise use browser.search and open results in the browser.",
     argsSchema: `{ query: string, maxResults?: number }`,
     examples: [
       '{"query":"atomic agent local operator runtime","maxResults":5}',
@@ -317,7 +317,7 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
   {
     name: "os.web.fetch",
     summary:
-      "Read a web page as readable markdown/text (cf-markdown → Readability → basic). GET only, no JS, no auth; SSRF-guarded; read-only. For raw API/JSON or POST, use os.http.request.",
+      "Fallback page extraction when browser tools are unavailable for your role or the user explicitly requests this tool. Returns readable markdown/text (cf-markdown → Readability → basic). GET only, no JS, no auth; SSRF-guarded; read-only. Otherwise read websites in the browser. For raw API/JSON or POST, use os.http.request.",
     argsSchema: `{ url: string, extractMode?: "markdown" | "text", maxChars?: number, timeoutMs?: number }`,
     examples: [
       '{"url":"https://example.com/article"}',

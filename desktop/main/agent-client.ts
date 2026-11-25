@@ -545,6 +545,8 @@ async function settlesWithin(p: Promise<unknown>, ms: number): Promise<boolean> 
  * and its record are never touched. Every field defaults to the real thing.
  */
 export interface AgentClientOptions {
+  /** Private browser bridge credentials supplied by this desktop process only. */
+  browserEnv?: Readonly<Record<string, string>>;
   /** The binary started as `atag serve` (default: resolveBinary). */
   binary?: () => string | null;
   /** The record the next launch's reaper reads (default: `<state dir>/serve.json`). */
@@ -880,7 +882,7 @@ export class AgentClient extends EventEmitter {
         {
           cwd: this.status.workingDir,
           // r5 item 9: `atag serve` runs on the desktop's own state directory.
-          env: agentEnv(),
+          env: { ...agentEnv(), ...this.opts.browserEnv },
           stdio: ["ignore", "pipe", "pipe"],
           // Windows: a console child of a GUI app otherwise opens a console window.
           windowsHide: true,
@@ -1140,6 +1142,11 @@ export class AgentClient extends EventEmitter {
   }
   capabilities = (sessionId?: string | null) => this.json<unknown>(`/api/capabilities${this.workspaceQuery(sessionId)}`);
   config = () => this.json<unknown>("/api/config");
+  /** Dedicated mail settings routes redact credentials and validate the account server-side. */
+  emailStatus = () => this.request<unknown>("GET", "/api/email");
+  emailSave = (input: Record<string, unknown>) => this.request<unknown>("PUT", "/api/email", input);
+  emailCheck = () => this.request<unknown>("POST", "/api/email/check", undefined, 100_000);
+  emailRemove = () => this.request<unknown>("DELETE", "/api/email");
   /** ATO-32: Cheap / Balanced / Best picks per provider (agent presets/model-tiers.ts). 404 on an older core. */
   modelTiers = () => this.json<unknown>("/api/model-tiers");
   skills = (sessionId?: string | null) => this.json<unknown>(`/api/skills${this.workspaceQuery(sessionId)}`);

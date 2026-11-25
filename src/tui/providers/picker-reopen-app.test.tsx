@@ -26,9 +26,11 @@ vi.mock("../../config/index.js", async (importOriginal) => {
   };
 });
 
-let currentConfig: AtomicAgentConfig;
+// These mocked provider-list fixtures intentionally supply only the LLM surface.
+type ProviderConfigFixture = { llm: NonNullable<AtomicAgentConfig["llm"]> };
+let currentConfig: ProviderConfigFixture;
 
-function configWithNous(baseUrl: string): AtomicAgentConfig {
+function configWithNous(baseUrl: string): ProviderConfigFixture {
   return {
     llm: {
       activeTextProvider: "nous",
@@ -45,7 +47,7 @@ function configWithNous(baseUrl: string): AtomicAgentConfig {
         },
       ],
     },
-  } as AtomicAgentConfig;
+  };
 }
 
 const SESSION = fakeSession({ workingDir: "/tmp/smoke" });
